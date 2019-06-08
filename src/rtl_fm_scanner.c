@@ -421,7 +421,7 @@ struct demod_state
 	pthread_mutex_t ready_m;
 	struct output_state* output_target;
 
-	int signal; // not processed: -1; 
+	int signal; // not processed: -1;
 };
 
 struct output_state
@@ -965,21 +965,21 @@ void full_demod( struct demod_state* d )
 	int sr = 0;
 	low_pass( d );
 
-	sr = rms(d->lowpassed, d->lp_len, 1);
+	sr = rms( d->lowpassed, d->lp_len, 1 );
 	if( sr > 0 ) {
 		d->signal = sr;
 	}
-	
-	if (sr < d->squelch_level) {
-		//printf("muting due to %d < %d\n", sr, d->squelch_level);
-		for (i=0; i<d->lp_len; i++) {
+
+	if( sr < d->squelch_level ) {
+		// printf("muting due to %d < %d\n", sr, d->squelch_level);
+		for( i = 0; i < d->lp_len; i++ ) {
 			d->lowpassed[i] = 0;
 		}
 	}
 
 	d->mode_demod( d ); /* lowpassed -> result */
-	
-	//if( d->mode_demod == &raw_demod ) {
+
+	// if( d->mode_demod == &raw_demod ) {
 	//	return;
 	//}
 	/* todo, fm noise squelch */
@@ -1011,7 +1011,7 @@ static int rtlsdr_callback( unsigned char* buf, uint32_t len, void* ctx )
 		s->buf16[i] = (int16_t)buf[i] - 127;
 	}
 
-	while(1) {
+	while( 1 ) {
 		pthread_rwlock_wrlock( &d->rw );
 		if( d->signal == -1 ) {
 			pthread_rwlock_unlock( &d->rw );
@@ -1054,12 +1054,14 @@ static void* dongle_thread_fn( void* arg )
 	bool can_print = true;
 
 	while( !do_exit ) {
-		
+
 		// change freq
 		if( next ) {
-			if( ++freq >= controller.freq_len ) { freq = 0; }
+			if( ++freq >= controller.freq_len ) {
+				freq = 0;
+			}
 
-			printf("changing to %d Hz\n", controller.freqs[freq].freq);
+			printf( "changing to %d Hz\n", controller.freqs[freq].freq );
 			blackout = BLACKOUT_PERIOD;
 			skip_wait = controller.freqs[freq].skip_duration;
 			squelch_wait = 0;
@@ -1067,13 +1069,13 @@ static void* dongle_thread_fn( void* arg )
 			can_print = true;
 
 			// TODO lock
-			
-			//set to huge value to silence it during blackout.
+
+			// set to huge value to silence it during blackout.
 			s->demod_target->squelch_level = 10000;
 			optimal_settings( controller.freqs[freq].freq, s->demod_target->rate_in );
 			rtlsdr_set_center_freq( s->dev, s->freq );
 			verbose_reset_buffer( s->dev );
-			//printf("set audio squelch to %d\n", s->demod_target->squelch_level);
+			// printf("set audio squelch to %d\n", s->demod_target->squelch_level);
 		}
 
 		int r = rtlsdr_read_sync( s->dev, buf, BUF_SIZE, &len );
@@ -1082,10 +1084,10 @@ static void* dongle_thread_fn( void* arg )
 			return 0;
 		}
 
-		//printf("feed data %d\n", len);
+		// printf("feed data %d\n", len);
 		int last_signal = rtlsdr_callback( buf, len, s );
 		if( last_signal == -1 ) {
-			printf("dropped data %d\n", len);
+			printf( "dropped data %d\n", len );
 			continue;
 		}
 		if( blackout > 0 ) {
@@ -1093,7 +1095,7 @@ static void* dongle_thread_fn( void* arg )
 			continue;
 		}
 		if( skip_wait == 0 ) {
-			//printf("next due to skip_wait\n");
+			// printf("next due to skip_wait\n");
 			next = true;
 			continue;
 		}
@@ -1106,10 +1108,13 @@ static void* dongle_thread_fn( void* arg )
 
 			// TODO lock
 			s->demod_target->squelch_level = controller.freqs[freq].open_squelch;
-			//printf("changing audio squelch to %d\n", s->demod_target->squelch_level);
+			// printf("changing audio squelch to %d\n", s->demod_target->squelch_level);
 
 			if( can_print ) {
-				printf("hit of %d on %d caused audio squelch set to %d\n", last_signal, controller.freqs[freq].freq, s->demod_target->squelch_level);
+				printf( "hit of %d on %d caused audio squelch set to %d\n",
+						last_signal,
+						controller.freqs[freq].freq,
+						s->demod_target->squelch_level );
 				can_print = false;
 			}
 
@@ -1118,7 +1123,7 @@ static void* dongle_thread_fn( void* arg )
 			continue;
 		}
 		if( squelch_wait == 0 ) {
-			//printf("next due to squelch_wait\n");
+			// printf("next due to squelch_wait\n");
 			next = true;
 			continue;
 		}
@@ -1138,7 +1143,7 @@ static void* demod_thread_fn( void* arg )
 		safe_cond_wait( &d->ready, &d->ready_m );
 		pthread_rwlock_wrlock( &d->rw );
 		d->signal = 0;
-		//printf("process data\n");
+		// printf("process data\n");
 		full_demod( d );
 		pthread_rwlock_unlock( &d->rw );
 		if( d->exit_flag ) {
@@ -1164,10 +1169,10 @@ static void* output_thread_fn( void* arg )
 		safe_cond_wait( &s->ready, &s->ready_m );
 		pthread_rwlock_rdlock( &s->rw );
 
-		//printf("write audio\n");
+		// printf("write audio\n");
 		res = pa_simple_write( pa_handle, s->result, 2 * s->result_len, &error );
 		if( res != 0 ) {
-			printf("failed to write audio\n");
+			printf( "failed to write audio\n" );
 		}
 
 		pthread_rwlock_unlock( &s->rw );
@@ -1205,7 +1210,7 @@ static void optimal_settings( int freq, int rate )
 	d->rate = (uint32_t)capture_rate;
 }
 
-//static void* controller_thread_fn( void* arg )
+// static void* controller_thread_fn( void* arg )
 //{
 void dongle_init( struct dongle_state* s )
 {
@@ -1282,11 +1287,11 @@ void controller_cleanup( struct controller_state* s )
 	pthread_mutex_destroy( &s->hop_m );
 }
 
-int parse_freqs( const char *path, struct controller_state *controller )
+int parse_freqs( const char* path, struct controller_state* controller )
 {
-	FILE *fp = fopen(path, "rb");
-	if( !fp  ) {
-		printf("failed to open %s\n", path);
+	FILE* fp = fopen( path, "rb" );
+	if( !fp ) {
+		printf( "failed to open %s\n", path );
 		return 1;
 	}
 
@@ -1294,23 +1299,30 @@ int parse_freqs( const char *path, struct controller_state *controller )
 
 	int freq, squelch, open_squelch, open_duration, skip_duration;
 
-	for(int i = 0; i < FREQUENCIES_LIMIT; ) {
+	for( int i = 0; i < FREQUENCIES_LIMIT; ) {
 
 		if( fgets( line, 1024, fp ) == NULL ) {
 			return 0;
 		}
 
-		int res = sscanf( line, "%d %d %d %d %d\n", &freq, &squelch, &open_squelch, &open_duration, &skip_duration);
+		int res = sscanf( line,
+						  "%d %d %d %d %d\n",
+						  &freq,
+						  &squelch,
+						  &open_squelch,
+						  &open_duration,
+						  &skip_duration );
 		if( res == 5 ) {
 			controller->freqs[i].freq = freq;
 			controller->freqs[i].scan_squelch = squelch;
 			controller->freqs[i].open_squelch = open_squelch;
 			controller->freqs[i].open_duration = open_duration;
 			controller->freqs[i].skip_duration = skip_duration;
-			controller->freq_len = i+1;
+			controller->freq_len = i + 1;
 			i++;
-		} else {
-			printf("skipping %s", line);
+		}
+		else {
+			printf( "skipping %s", line );
 		}
 	}
 	return 0;
@@ -1339,19 +1351,19 @@ int main( int argc, char** argv )
 	}
 
 	if( optind >= argc ) {
-		printf("missing frequencies file\n");
+		printf( "missing frequencies file\n" );
 		return 1;
 	}
 
-	const char *path = argv[optind];
+	const char* path = argv[optind];
 	if( parse_freqs( path, &controller ) ) {
 		return 1;
 	}
 	for( int i = 0; i < controller.freq_len; i++ ) {
-		printf("%d\n", controller.freqs[i].freq);
+		printf( "%d\n", controller.freqs[i].freq );
 	}
 	if( controller.freq_len == 0 ) {
-		printf("no frequencies loaded from %s\n", path);
+		printf( "no frequencies loaded from %s\n", path );
 		return 1;
 	}
 
@@ -1361,8 +1373,6 @@ int main( int argc, char** argv )
 	if( !output.rate ) {
 		output.rate = demod.rate_out;
 	}
-
-	
 
 	ACTUAL_BUF_LENGTH = lcm_post[demod.post_downsample] * DEFAULT_BUF_LENGTH;
 
@@ -1413,7 +1423,7 @@ int main( int argc, char** argv )
 	verbose_set_frequency( dongle.dev, dongle.freq );
 	verbose_set_sample_rate( dongle.dev, dongle.rate );
 
-	usleep(1000000);
+	usleep( 1000000 );
 
 	pthread_create( &output.thread, NULL, output_thread_fn, (void*)( &output ) );
 	pthread_create( &demod.thread, NULL, demod_thread_fn, (void*)( &demod ) );
