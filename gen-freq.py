@@ -1,6 +1,7 @@
-squelch = 200
-audio_squelch = 0
-wait = 5000
+#!/usr/bin/env python3
+squelch = 250
+audio_squelch = 80
+wait = 100000
 
 # repeater outputs
 for freq in range(145100000, 145500000, 5000):
