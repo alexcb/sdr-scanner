@@ -1,5 +1,5 @@
 # sdr-scanner
-An ncurses-based fork of rtl_fm.c which sends audio directly to pulseaudio (withing needing to pipe stdout to play/aplay).
+An ncurses-based fork of rtl_fm.c which sends audio directly to pulseaudio (without needing to pipe stdout to play/aplay).
 
 A file of frequencies to scan is passed as the first argument.
 
