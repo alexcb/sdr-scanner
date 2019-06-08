@@ -1055,10 +1055,12 @@ static void* dongle_thread_fn( void* arg )
 		if( can_print || ( ii++ % 300 ) == 0 ) {
 			int percentage = freq * 100 / controller.freq_len;
 			clear();
+			int mhz = controller.freqs[freq].freq / 1000000;
+			int khz = (controller.freqs[freq].freq / 1000) % 1000;
 			mvprintw( 0,
 					  0,
-					  "%d kHz%s [%s]; signal: %d; scan: %d%%%s\n",
-					  controller.freqs[freq].freq / 1000,
+					  "%03d.%03d MHz% 20s [% 30s]; signal: %04d; scan: %02d%%%s\n",
+					  mhz, khz,
 					  signal_found ? " [squelch-open]" : "",
 					  controller.freqs[freq].desc,
 					  last_signal,
