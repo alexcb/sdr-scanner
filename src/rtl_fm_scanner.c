@@ -998,6 +998,7 @@ static int rtlsdr_callback( unsigned char* buf, uint32_t len, void* ctx )
 		if( d->signal == -1 ) {
 			pthread_rwlock_unlock( &d->rw );
 			safe_cond_signal( &d->ready, &d->ready_m );
+			usleep(100);
 			continue;
 		}
 		memcpy( d->lowpassed, s->buf16, 2 * len );
