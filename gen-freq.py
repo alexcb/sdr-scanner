@@ -4,7 +4,7 @@ audio_squelch = 80
 wait = 100000
 
 vhf_spacing = 30000
-uhf_spacing = 12500
+uhf_spacing = 30000
 
 # repeater outputs
 for freq in range(145100000, 145500000, vhf_spacing):

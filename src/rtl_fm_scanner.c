@@ -1084,6 +1084,7 @@ static void* dongle_thread_fn( void* arg )
 
 				open_duration = -1;
 				open_squelch = 0;
+				s->demod_target->squelch_level = open_squelch;
 			}
 
 			next = 0;
@@ -1113,6 +1114,7 @@ static void* dongle_thread_fn( void* arg )
 					  last_signal,
 					  percentage,
 					  scanning ? " [scanning]" : " [manual]" );
+			mvprintw( 4, 0, "keys: j/k +/- 5kHz; [s]kip; spacebar: scanner pause" );
 			refresh();
 			can_print = false;
 		}
@@ -1154,6 +1156,11 @@ static void* dongle_thread_fn( void* arg )
 		if( scanning != controller.scanning ) {
 			scanning = controller.scanning;
 			can_print = true;
+			if( scanning ) {
+				pthread_mutex_unlock( &controller.hop_m );
+				next = true;
+				continue;
+			}
 		}
 		if( !controller.scanning ) {
 			pthread_mutex_unlock( &controller.hop_m );
@@ -1267,6 +1274,7 @@ static void* controller_thread_fn( void* arg )
 			break;
 		case 115: // s
 			controller.skip = true;
+			controller.scanning = true;
 			break;
 		case 107: // up
 			controller.scanning = false;
