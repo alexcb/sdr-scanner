@@ -439,8 +439,9 @@ struct controller_state
 	int wb_mode;
 	pthread_cond_t hop;
 	pthread_mutex_t hop_m;
-	bool paused;
+	bool scanning;
 	bool skip;
+	int freq_adjust;
 };
 
 // multiple of these, eventually
@@ -954,7 +955,7 @@ void full_demod( struct demod_state* d )
 	}
 
 	if( sr < d->squelch_level ) {
-		// printf("muting due to %d < %d\n", sr, d->squelch_level);
+		//printf("muting due to %d < %d\n", sr, d->squelch_level);
 		for( i = 0; i < d->lp_len; i++ ) {
 			d->lowpassed[i] = 0;
 		}
@@ -1021,7 +1022,8 @@ static void optimal_settings( int freq, int rate );
 // this is to reduce chirps which happen between freq changes
 // we must always wait at least one cycle due to the way we check
 // the last signal, and not current signal
-#define BLACKOUT_PERIOD 10
+#define BLACKOUT_PERIOD 5
+#define SAMPLE_PERIOD 5
 
 static void* dongle_thread_fn( void* arg )
 {
@@ -1029,70 +1031,92 @@ static void* dongle_thread_fn( void* arg )
 	unsigned char buf[BUF_SIZE];
 	int len;
 
-	int freq;
+	int freq_i = -1;
+	int freq = 0;
+
 	int blackout = BLACKOUT_PERIOD;
+	int sample_wait = BLACKOUT_PERIOD;
 	int squelch_wait = 0;
 	int skip_wait = 0;
 	int last_signal = -1;
-	bool next = false;
+	bool next = true;
 
 	bool can_print = true;
-	bool last_pause = false;
+	bool scanning = true;
 	bool signal_found = false;
+
+	char *freq_desc = "";
+
+	int scan_squelch = 0;
+	int open_squelch = 0;
+	int open_duration;
 
 	int ii = 0;
 
 	while( !do_exit ) {
 
-		// display status
-		// time_t t ;
-		// struct tm *tmp ;
-		// char time_buf[1024];
-		// time( &t );
-		// tmp = localtime( &t );
-		// strftime(time_buf, 1024, "%Y-%m-%d %H:%M:%S", tmp);
-
-		if( can_print || ( ii++ % 300 ) == 0 ) {
-			int percentage = freq * 100 / controller.freq_len;
-			clear();
-			int mhz = controller.freqs[freq].freq / 1000000;
-			int khz = (controller.freqs[freq].freq / 1000) % 1000;
-			mvprintw( 0,
-					  0,
-					  "%03d.%03d MHz% 20s [% 30s]; signal: %04d; scan: %02d%%%s\n",
-					  mhz, khz,
-					  signal_found ? " [squelch-open]" : "",
-					  controller.freqs[freq].desc,
-					  last_signal,
-					  percentage,
-					  last_pause ? " [scanning-paused]" : "" );
-			refresh();
-			can_print = false;
-		}
-
 		// change freq
 		if( next ) {
-			if( ++freq >= controller.freq_len ) {
-				freq = 0;
+			if( scanning ) {
+				if( ++freq_i >= controller.freq_len ) {
+					freq_i = 0;
+				}
+
+				blackout = BLACKOUT_PERIOD;
+				sample_wait = SAMPLE_PERIOD;
+				skip_wait = controller.freqs[freq_i].skip_duration;
+				squelch_wait = 0;
+
+				freq = controller.freqs[freq_i].freq;
+				freq_desc = controller.freqs[freq_i].desc;
+				scan_squelch = controller.freqs[freq_i].scan_squelch;
+				open_duration = controller.freqs[freq_i].open_duration;
+				open_squelch = controller.freqs[freq_i].open_squelch;
+				
+				// set to huge value to silence it during blackout.
+				s->demod_target->squelch_level = 10000;
+			} else {
+				blackout = 0;
+				sample_wait = 0;
+				skip_wait = -1;
+				squelch_wait = -1;
+				freq_desc = "manual";
+
+				open_duration = -1;
+				open_squelch = 0;
 			}
 
-			// printf( "changing to %d Hz\n", controller.freqs[freq].freq );
-			blackout = BLACKOUT_PERIOD;
-			skip_wait = controller.freqs[freq].skip_duration;
-			squelch_wait = 0;
 			next = 0;
 			can_print = true;
 
 			// TODO lock
 
-			// set to huge value to silence it during blackout.
-			s->demod_target->squelch_level = 10000;
-			optimal_settings( controller.freqs[freq].freq, s->demod_target->rate_in );
+			assert( freq > 100000000 );
+			optimal_settings( freq, s->demod_target->rate_in );
 			rtlsdr_set_center_freq( s->dev, s->freq );
 			verbose_reset_buffer( s->dev );
 			// printf("set audio squelch to %d\n", s->demod_target->squelch_level);
 			signal_found = false;
 		}
+
+		if( can_print || ( ii++ % 300 ) == 0 ) {
+			int percentage = freq_i * 100 / controller.freq_len;
+			clear();
+			int mhz = freq / 1000000;
+			int khz = (freq / 1000) % 1000;
+			mvprintw( 0,
+					  0,
+					  "%03d.%03d MHz% 20s [% 30s]; signal: %04d; scan: %02d%%%s\n",
+					  mhz, khz,
+					  signal_found ? " [squelch-open]" : "",
+					  freq_desc,
+					  last_signal,
+					  percentage,
+					  scanning ? " [scanning]" : " [manual]" );
+			refresh();
+			can_print = false;
+		}
+
 
 		int r = rtlsdr_read_sync( s->dev, buf, BUF_SIZE, &len );
 		if( r < 0 ) {
@@ -1100,7 +1124,7 @@ static void* dongle_thread_fn( void* arg )
 			return 0;
 		}
 
-		// printf("feed data %d\n", len);
+		//printf("feed data %d\n", len);
 		last_signal = rtlsdr_callback( buf, len, s );
 		if( last_signal == -1 ) {
 			printf( "dropped data %d\n", len );
@@ -1108,6 +1132,18 @@ static void* dongle_thread_fn( void* arg )
 		}
 
 		pthread_mutex_lock( &controller.hop_m );
+
+		if( controller.freq_adjust ) {
+			freq += controller.freq_adjust;
+			controller.freq_adjust = 0;
+			next = true;
+			assert( controller.scanning == false );
+			scanning = false;
+			can_print = true;
+			pthread_mutex_unlock( &controller.hop_m );
+			continue;
+		}
+
 		if( controller.skip ) {
 			next = true;
 			controller.skip = false;
@@ -1115,11 +1151,11 @@ static void* dongle_thread_fn( void* arg )
 			continue;
 		}
 
-		if( last_pause != controller.paused ) {
-			last_pause = controller.paused;
+		if( scanning != controller.scanning ) {
+			scanning = controller.scanning;
 			can_print = true;
 		}
-		if( controller.paused ) {
+		if( !controller.scanning ) {
 			pthread_mutex_unlock( &controller.hop_m );
 			continue;
 		}
@@ -1129,20 +1165,12 @@ static void* dongle_thread_fn( void* arg )
 			blackout--;
 			continue;
 		}
-		if( skip_wait == 0 ) {
-			// printf("next due to skip_wait\n");
-			next = true;
-			continue;
-		}
-		if( skip_wait > 0 ) {
-			skip_wait--;
-		}
-		if( last_signal > controller.freqs[freq].scan_squelch ) {
+		if( last_signal > scan_squelch ) {
 			// reset the timer
-			squelch_wait = controller.freqs[freq].open_duration;
+			squelch_wait = open_duration;
 
 			// TODO lock
-			s->demod_target->squelch_level = controller.freqs[freq].open_squelch;
+			s->demod_target->squelch_level = open_squelch;
 
 			if( !signal_found ) {
 				// dont refresh too quickly
@@ -1154,6 +1182,21 @@ static void* dongle_thread_fn( void* arg )
 			signal_found = true;
 			continue;
 		}
+
+		if( sample_wait > 0 ) {
+			sample_wait--;
+			continue;
+		}
+
+		if( skip_wait == 0 ) {
+			// printf("next due to skip_wait\n");
+			next = true;
+			continue;
+		}
+		if( skip_wait > 0 ) {
+			skip_wait--;
+		}
+
 		if( squelch_wait == 0 ) {
 			// printf("next due to squelch_wait\n");
 			next = true;
@@ -1220,10 +1263,18 @@ static void* controller_thread_fn( void* arg )
 		pthread_mutex_lock( &controller.hop_m );
 		switch( key ) {
 		case 32: // spacebar
-			controller.paused = !controller.paused;
+			controller.scanning = !controller.scanning;
 			break;
 		case 115: // s
 			controller.skip = true;
+			break;
+		case 107: // up
+			controller.scanning = false;
+			controller.freq_adjust = 5000;
+			break;
+		case 106: // down
+			controller.scanning = false;
+			controller.freq_adjust = -5000;
 			break;
 		case 113: // q
 			do_exit = true;
@@ -1326,7 +1377,7 @@ void controller_init( struct controller_state* s )
 {
 	s->freq_len = 0;
 	s->wb_mode = 0;
-	s->paused = false;
+	s->scanning = true;
 	s->skip = false;
 	pthread_cond_init( &s->hop, NULL );
 	pthread_mutex_init( &s->hop_m, NULL );
