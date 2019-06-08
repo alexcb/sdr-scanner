@@ -1,6 +1,6 @@
 CC=gcc
 CCFLAGS=-std=gnu11 -Wuninitialized -Wall -Werror -Wno-unused-label
-LDFLAGS=-lm -lpthread -lrtlsdr -lpulse -lpulse-simple
+LDFLAGS=-lm -lpthread -lrtlsdr -lpulse -lpulse-simple -lncurses
 
 SERVERSRC=$(wildcard src/*.c)
 SERVEROBJ=$(SERVERSRC:%.c=%.o)

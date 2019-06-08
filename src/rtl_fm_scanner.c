@@ -1,4 +1,13 @@
 /*
+ * rtl_fm_scanner - a command-line based scanner for rtl sdr.
+ * fork from rtl-sdr's  receiver.
+ * This code is forked from rtl_fm.c from the rtl-sdr project which is GPL.
+ * Modified by Alex Couture-Beil <rtl-scanner@mofo.ca>
+ *
+ **************************************************************************
+ * Original rtl-sdr copyright:
+ **************************************************************************
+ *
  * rtl-sdr, turns your Realtek RTL2832 based DVB dongle into a SDR receiver
  * Copyright (C) 2012 by Steve Markgraf <steve@steve-m.de>
  * Copyright (C) 2012 by Hoernchen <la@tfc-server.de>
@@ -19,34 +28,6 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-/*
- * written because people could not do real time
- * FM demod on Atom hardware with GNU radio
- * based on rtl_sdr.c and rtl_tcp.c
- *
- * lots of locks, but that is okay
- * (no many-to-many locks)
- *
- * todo:
- *       sanity checks
- *       scale squelch to other input parameters
- *       test all the demodulations
- *       pad output on hop
- *       frequency ranges could be stored better
- *       scaled AM demod amplification
- *       auto-hop after time limit
- *       peak detector to tune onto stronger signals
- *       fifo for active hop frequency
- *       clips
- *       noise squelch
- *       merge stereo patch
- *       merge soft agc patch
- *       merge udp patch
- *       testmode to detect overruns
- *       watchdog to reset bad dongle
- *       fix oversampling
- */
-
 #include <assert.h>
 #include <errno.h>
 #include <signal.h>
@@ -62,6 +43,7 @@
 
 #include <pulse/error.h>
 #include <pulse/simple.h>
+#include <curses.h>
 
 #include "rtl-sdr.h"
 
@@ -407,7 +389,7 @@ struct demod_state
 	int downsample; /* min 1, max 256 */
 	int post_downsample;
 	int output_scale;
-	int squelch_level, conseq_squelch, squelch_hits;
+	int squelch_level;
 	int downsample_passes;
 	int comp_fir_size;
 	int custom_atan;
@@ -453,11 +435,11 @@ struct controller_state
 	pthread_t thread;
 	struct freq freqs[FREQUENCIES_LIMIT];
 	int freq_len;
-	int freq_now;
-	int edge;
 	int wb_mode;
 	pthread_cond_t hop;
 	pthread_mutex_t hop_m;
+	bool paused;
+	bool skip;
 };
 
 // multiple of these, eventually
@@ -1049,11 +1031,34 @@ static void* dongle_thread_fn( void* arg )
 	int blackout = BLACKOUT_PERIOD;
 	int squelch_wait = 0;
 	int skip_wait = 0;
+	int last_signal = -1;
 	bool next = false;
 
 	bool can_print = true;
+	bool last_pause = false;
+	bool signal_found = false;
 
 	while( !do_exit ) {
+
+		// display status
+    	//time_t t ; 
+    	//struct tm *tmp ; 
+    	//char time_buf[1024]; 
+    	//time( &t ); 
+    	//tmp = localtime( &t ); 
+    	//strftime(time_buf, 1024, "%Y-%m-%d %H:%M:%S", tmp); 
+
+		if( can_print ) {
+			clear();
+			mvprintw(0, 0, "%d kHz%s; signal: %d%s\n",
+					controller.freqs[freq].freq / 1000,
+					signal_found ? " [squelch-open]" : "",
+					last_signal,
+					last_pause ? " [scanning-paused]" : ""
+					);
+			refresh();
+			can_print = false;
+		}
 
 		// change freq
 		if( next ) {
@@ -1061,7 +1066,7 @@ static void* dongle_thread_fn( void* arg )
 				freq = 0;
 			}
 
-			printf( "changing to %d Hz\n", controller.freqs[freq].freq );
+			//printf( "changing to %d Hz\n", controller.freqs[freq].freq );
 			blackout = BLACKOUT_PERIOD;
 			skip_wait = controller.freqs[freq].skip_duration;
 			squelch_wait = 0;
@@ -1076,6 +1081,7 @@ static void* dongle_thread_fn( void* arg )
 			rtlsdr_set_center_freq( s->dev, s->freq );
 			verbose_reset_buffer( s->dev );
 			// printf("set audio squelch to %d\n", s->demod_target->squelch_level);
+			signal_found = false;
 		}
 
 		int r = rtlsdr_read_sync( s->dev, buf, BUF_SIZE, &len );
@@ -1085,11 +1091,30 @@ static void* dongle_thread_fn( void* arg )
 		}
 
 		// printf("feed data %d\n", len);
-		int last_signal = rtlsdr_callback( buf, len, s );
+		last_signal = rtlsdr_callback( buf, len, s );
 		if( last_signal == -1 ) {
 			printf( "dropped data %d\n", len );
 			continue;
 		}
+
+		pthread_mutex_lock( &controller.hop_m );
+		if( controller.skip ) {
+			next = true;
+			controller.skip = false;
+			pthread_mutex_unlock( &controller.hop_m );
+			continue;
+		}
+
+		if( last_pause != controller.paused ) {
+			last_pause = controller.paused;
+			can_print = true;
+		}
+		if( controller.paused ) {
+			pthread_mutex_unlock( &controller.hop_m );
+			continue;
+		}
+		pthread_mutex_unlock( &controller.hop_m );
+
 		if( blackout > 0 ) {
 			blackout--;
 			continue;
@@ -1108,18 +1133,15 @@ static void* dongle_thread_fn( void* arg )
 
 			// TODO lock
 			s->demod_target->squelch_level = controller.freqs[freq].open_squelch;
-			// printf("changing audio squelch to %d\n", s->demod_target->squelch_level);
 
-			if( can_print ) {
-				printf( "hit of %d on %d caused audio squelch set to %d\n",
-						last_signal,
-						controller.freqs[freq].freq,
-						s->demod_target->squelch_level );
-				can_print = false;
+			if( !signal_found || skip_wait % 1000 == 0 ) {
+				// dont refresh too quickly
+				can_print = true;
 			}
 
 			// since we heard something, leave the channel open for longer
 			squelch_wait = skip_wait;
+			signal_found = true;
 			continue;
 		}
 		if( squelch_wait == 0 ) {
@@ -1180,6 +1202,30 @@ static void* output_thread_fn( void* arg )
 	return 0;
 }
 
+static void *controller_thread_fn(void *arg)
+{
+	int key;
+	while( !do_exit ) {
+		key = getch();
+		pthread_mutex_lock( &controller.hop_m );
+		switch(key) {
+			case 32: // spacebar
+				controller.paused = !controller.paused;
+				break;
+			case 115: //s
+				controller.skip = true;
+				break;
+			case 113: //q
+				do_exit = true;
+				break;
+			default:
+				printf("unsupported key: %d\n", key);
+		}
+		pthread_mutex_unlock( &controller.hop_m );
+	}
+	return NULL;
+}
+
 static void optimal_settings( int freq, int rate )
 {
 	// giant ball of hacks
@@ -1187,7 +1233,6 @@ static void optimal_settings( int freq, int rate )
 	int capture_freq, capture_rate;
 	struct dongle_state* d = &dongle;
 	struct demod_state* dm = &demod;
-	struct controller_state* cs = &controller;
 	dm->downsample = ( 1000000 / dm->rate_in ) + 1;
 	if( dm->downsample_passes ) {
 		dm->downsample_passes = (int)log2( dm->downsample ) + 1;
@@ -1198,7 +1243,6 @@ static void optimal_settings( int freq, int rate )
 	if( !d->offset_tuning ) {
 		capture_freq = freq + capture_rate / 4;
 	}
-	capture_freq += cs->edge * dm->rate_in / 2;
 	dm->output_scale = ( 1 << 15 ) / ( 128 * dm->downsample );
 	if( dm->output_scale < 1 ) {
 		dm->output_scale = 1;
@@ -1210,8 +1254,6 @@ static void optimal_settings( int freq, int rate )
 	d->rate = (uint32_t)capture_rate;
 }
 
-// static void* controller_thread_fn( void* arg )
-//{
 void dongle_init( struct dongle_state* s )
 {
 	s->rate = DEFAULT_SAMPLE_RATE;
@@ -1227,8 +1269,6 @@ void demod_init( struct demod_state* s )
 	s->rate_in = DEFAULT_SAMPLE_RATE;
 	s->rate_out = DEFAULT_SAMPLE_RATE;
 	s->squelch_level = 0;
-	s->conseq_squelch = 10;
-	s->squelch_hits = 11;
 	s->downsample_passes = 0;
 	s->comp_fir_size = 0;
 	s->prev_index = 0;
@@ -1275,8 +1315,9 @@ void output_cleanup( struct output_state* s )
 void controller_init( struct controller_state* s )
 {
 	s->freq_len = 0;
-	s->edge = 0;
 	s->wb_mode = 0;
+	s->paused = false;
+	s->skip = false;
 	pthread_cond_init( &s->hop, NULL );
 	pthread_mutex_init( &s->hop_m, NULL );
 }
@@ -1367,6 +1408,12 @@ int main( int argc, char** argv )
 		return 1;
 	}
 
+	// init ncurses
+	initscr();
+	clear();
+	noecho();
+	cbreak();
+
 	/* quadruple sample_rate to limit to Δθ to ±π/2 */
 	demod.rate_in *= demod.post_downsample;
 
@@ -1425,6 +1472,7 @@ int main( int argc, char** argv )
 
 	usleep( 1000000 );
 
+	pthread_create( &controller.thread, NULL, controller_thread_fn, (void*)( &output ) );
 	pthread_create( &output.thread, NULL, output_thread_fn, (void*)( &output ) );
 	pthread_create( &demod.thread, NULL, demod_thread_fn, (void*)( &demod ) );
 	pthread_create( &dongle.thread, NULL, dongle_thread_fn, (void*)( &dongle ) );
@@ -1455,7 +1503,9 @@ int main( int argc, char** argv )
 	controller_cleanup( &controller );
 
 	rtlsdr_close( dongle.dev );
-	return r >= 0 ? r : -r;
+
+	endwin();
+	return 0;
 }
 
 // vim: tabstop=8:softtabstop=8:shiftwidth=8:noexpandtab
