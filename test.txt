@@ -1,0 +1,15 @@
+# duration of 2000 ~= 1 second
+
+# skip-duration means we will spend at most this much time on the channel before moving on.
+# setting it to -1 disables this; meaning that we'll stay on this frequency as long as it consistently has
+# a signal on it.
+
+# wait-duration means after a signal disapears, we will wait that much more time for it to come back;
+# and if it does come back, the wait timer will be reset.
+
+# Freq       scan-squelch   audio-squelch   wait-duration    skip-duration
+462700000     100           200             10000            50000
+462725000     100           200             10000            50000
+
+162475000     300           200             -1               10000
+146580000     300           200             50000            -1
