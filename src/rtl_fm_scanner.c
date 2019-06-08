@@ -1114,7 +1114,7 @@ static void* dongle_thread_fn( void* arg )
 					  last_signal,
 					  percentage,
 					  scanning ? " [scanning]" : " [manual]" );
-			mvprintw( 4, 0, "keys: j/k +/- 5kHz; [s]kip; spacebar: scanner pause" );
+			mvprintw( 4, 0, "keys: j/k +/- 5kHz; [s]kip; spacebar: scanner pause; [q]uit" );
 			refresh();
 			can_print = false;
 		}
