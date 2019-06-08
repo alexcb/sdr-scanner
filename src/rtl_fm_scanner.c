@@ -1021,7 +1021,7 @@ static void optimal_settings( int freq, int rate );
 // this is to reduce chirps which happen between freq changes
 // we must always wait at least one cycle due to the way we check
 // the last signal, and not current signal
-#define BLACKOUT_PERIOD 100
+#define BLACKOUT_PERIOD 10
 
 static void* dongle_thread_fn( void* arg )
 {
