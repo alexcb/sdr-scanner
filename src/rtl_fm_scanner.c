@@ -41,9 +41,9 @@
 #include <pthread.h>
 #include <stdbool.h>
 
+#include <curses.h>
 #include <pulse/error.h>
 #include <pulse/simple.h>
-#include <curses.h>
 
 #include "rtl-sdr.h"
 
@@ -427,6 +427,7 @@ struct freq
 	int open_squelch;
 	int open_duration;
 	int skip_duration;
+	char* desc;
 };
 
 struct controller_state
@@ -998,7 +999,7 @@ static int rtlsdr_callback( unsigned char* buf, uint32_t len, void* ctx )
 		if( d->signal == -1 ) {
 			pthread_rwlock_unlock( &d->rw );
 			safe_cond_signal( &d->ready, &d->ready_m );
-			usleep(100);
+			usleep( 100 );
 			continue;
 		}
 		memcpy( d->lowpassed, s->buf16, 2 * len );
@@ -1039,24 +1040,30 @@ static void* dongle_thread_fn( void* arg )
 	bool last_pause = false;
 	bool signal_found = false;
 
+	int ii = 0;
+
 	while( !do_exit ) {
 
 		// display status
-    	//time_t t ; 
-    	//struct tm *tmp ; 
-    	//char time_buf[1024]; 
-    	//time( &t ); 
-    	//tmp = localtime( &t ); 
-    	//strftime(time_buf, 1024, "%Y-%m-%d %H:%M:%S", tmp); 
+		// time_t t ;
+		// struct tm *tmp ;
+		// char time_buf[1024];
+		// time( &t );
+		// tmp = localtime( &t );
+		// strftime(time_buf, 1024, "%Y-%m-%d %H:%M:%S", tmp);
 
-		if( can_print ) {
+		if( can_print || ( ii++ % 300 ) == 0 ) {
+			int percentage = freq * 100 / controller.freq_len;
 			clear();
-			mvprintw(0, 0, "%d kHz%s; signal: %d%s\n",
-					controller.freqs[freq].freq / 1000,
-					signal_found ? " [squelch-open]" : "",
-					last_signal,
-					last_pause ? " [scanning-paused]" : ""
-					);
+			mvprintw( 0,
+					  0,
+					  "%d kHz%s [%s]; signal: %d; scan: %d%%%s\n",
+					  controller.freqs[freq].freq / 1000,
+					  signal_found ? " [squelch-open]" : "",
+					  controller.freqs[freq].desc,
+					  last_signal,
+					  percentage,
+					  last_pause ? " [scanning-paused]" : "" );
 			refresh();
 			can_print = false;
 		}
@@ -1067,7 +1074,7 @@ static void* dongle_thread_fn( void* arg )
 				freq = 0;
 			}
 
-			//printf( "changing to %d Hz\n", controller.freqs[freq].freq );
+			// printf( "changing to %d Hz\n", controller.freqs[freq].freq );
 			blackout = BLACKOUT_PERIOD;
 			skip_wait = controller.freqs[freq].skip_duration;
 			squelch_wait = 0;
@@ -1135,7 +1142,7 @@ static void* dongle_thread_fn( void* arg )
 			// TODO lock
 			s->demod_target->squelch_level = controller.freqs[freq].open_squelch;
 
-			if( !signal_found || skip_wait % 1000 == 0 ) {
+			if( !signal_found ) {
 				// dont refresh too quickly
 				can_print = true;
 			}
@@ -1203,24 +1210,24 @@ static void* output_thread_fn( void* arg )
 	return 0;
 }
 
-static void *controller_thread_fn(void *arg)
+static void* controller_thread_fn( void* arg )
 {
 	int key;
 	while( !do_exit ) {
 		key = getch();
 		pthread_mutex_lock( &controller.hop_m );
-		switch(key) {
-			case 32: // spacebar
-				controller.paused = !controller.paused;
-				break;
-			case 115: //s
-				controller.skip = true;
-				break;
-			case 113: //q
-				do_exit = true;
-				break;
-			default:
-				printf("unsupported key: %d\n", key);
+		switch( key ) {
+		case 32: // spacebar
+			controller.paused = !controller.paused;
+			break;
+		case 115: // s
+			controller.skip = true;
+			break;
+		case 113: // q
+			do_exit = true;
+			break;
+		default:
+			printf( "unsupported key: %d\n", key );
 		}
 		pthread_mutex_unlock( &controller.hop_m );
 	}
@@ -1329,6 +1336,13 @@ void controller_cleanup( struct controller_state* s )
 	pthread_mutex_destroy( &s->hop_m );
 }
 
+const char* chomp( char* s )
+{
+	while( s[0] == ' ' || s[0] == '\t' || s[0] == '\n' )
+		s++;
+	return s;
+}
+
 int parse_freqs( const char* path, struct controller_state* controller )
 {
 	FILE* fp = fopen( path, "rb" );
@@ -1338,6 +1352,7 @@ int parse_freqs( const char* path, struct controller_state* controller )
 	}
 
 	char line[1024];
+	char desc[1024];
 
 	int freq, squelch, open_squelch, open_duration, skip_duration;
 
@@ -1347,27 +1362,35 @@ int parse_freqs( const char* path, struct controller_state* controller )
 			return 0;
 		}
 
-		int res = sscanf( line,
-						  "%d %d %d %d %d\n",
+		const char* l = chomp( line );
+
+		desc[0] = '\0';
+		int res = sscanf( l,
+						  "%d %d %d %d %d %s",
 						  &freq,
 						  &squelch,
 						  &open_squelch,
 						  &open_duration,
-						  &skip_duration );
-		if( res == 5 ) {
+						  &skip_duration,
+						  desc );
+		if( res >= 5 ) {
 			controller->freqs[i].freq = freq;
 			controller->freqs[i].scan_squelch = squelch;
 			controller->freqs[i].open_squelch = open_squelch;
 			controller->freqs[i].open_duration = open_duration;
 			controller->freqs[i].skip_duration = skip_duration;
+			controller->freqs[i].desc = strdup( desc[0] ? desc : "unknown" );
 			controller->freq_len = i + 1;
 			i++;
 		}
 		else {
-			printf( "skipping %s", line );
+			if( l[0] != '#' && l[0] != '\0' ) {
+				printf( "failed to read line \"%s\"\n", l );
+				assert( 0 );
+			}
 		}
 	}
-	return 0;
+	assert( 0 );
 }
 
 int main( int argc, char** argv )
