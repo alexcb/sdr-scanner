@@ -955,7 +955,7 @@ void full_demod( struct demod_state* d )
 	}
 
 	if( sr < d->squelch_level ) {
-		//printf("muting due to %d < %d\n", sr, d->squelch_level);
+		// printf("muting due to %d < %d\n", sr, d->squelch_level);
 		for( i = 0; i < d->lp_len; i++ ) {
 			d->lowpassed[i] = 0;
 		}
@@ -1045,7 +1045,7 @@ static void* dongle_thread_fn( void* arg )
 	bool scanning = true;
 	bool signal_found = false;
 
-	char *freq_desc = "";
+	char* freq_desc = "";
 
 	int scan_squelch = 0;
 	int open_squelch = 0;
@@ -1072,10 +1072,11 @@ static void* dongle_thread_fn( void* arg )
 				scan_squelch = controller.freqs[freq_i].scan_squelch;
 				open_duration = controller.freqs[freq_i].open_duration;
 				open_squelch = controller.freqs[freq_i].open_squelch;
-				
+
 				// set to huge value to silence it during blackout.
 				s->demod_target->squelch_level = 10000;
-			} else {
+			}
+			else {
 				blackout = 0;
 				sample_wait = 0;
 				skip_wait = -1;
@@ -1104,11 +1105,12 @@ static void* dongle_thread_fn( void* arg )
 			int percentage = freq_i * 100 / controller.freq_len;
 			clear();
 			int mhz = freq / 1000000;
-			int khz = (freq / 1000) % 1000;
+			int khz = ( freq / 1000 ) % 1000;
 			mvprintw( 0,
 					  0,
 					  "%03d.%03d MHz% 20s [% 30s]; signal: %04d; scan: %02d%%%s\n",
-					  mhz, khz,
+					  mhz,
+					  khz,
 					  signal_found ? " [squelch-open]" : "",
 					  freq_desc,
 					  last_signal,
@@ -1119,14 +1121,13 @@ static void* dongle_thread_fn( void* arg )
 			can_print = false;
 		}
 
-
 		int r = rtlsdr_read_sync( s->dev, buf, BUF_SIZE, &len );
 		if( r < 0 ) {
 			printf( "failed to read: %d\n", r );
 			return 0;
 		}
 
-		//printf("feed data %d\n", len);
+		// printf("feed data %d\n", len);
 		last_signal = rtlsdr_callback( buf, len, s );
 		if( last_signal == -1 ) {
 			printf( "dropped data %d\n", len );
