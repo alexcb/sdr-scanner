@@ -41,6 +41,34 @@ GMainLoop* mainloop = NULL;
 //	return;
 //}
 
+int thread_stop_issued = 0;
+pthread_mutex_t thread_stop_mutex;
+
+int should_thread_stop(void) {
+  int ret = 0;
+  pthread_mutex_lock(&thread_stop_mutex);
+  ret = thread_stop_issued;
+  pthread_mutex_unlock(&thread_stop_mutex);
+  return ret;
+}
+
+void stop_thread() {
+  pthread_mutex_lock(&thread_stop_mutex);
+  thread_stop_issued = 1;
+  pthread_mutex_unlock(&thread_stop_mutex);
+}
+
+void *radio_worker(void *x_void_ptr)
+{
+	int i = 0;
+	while( !should_thread_stop() ) {
+		i = (i%100) + 1;
+		printf("hello %d\n", i);
+		sleep(1);
+	}
+	return NULL;
+}
+
 static void mute_item_clicked_cb( GtkWidget* widget, gpointer data )
 {
 	if( gtk_check_menu_item_get_active(GTK_CHECK_MENU_ITEM( widget ) ) ) {
@@ -89,8 +117,26 @@ int main( int argc, char** argv )
 
 	app_indicator_set_menu( ci, GTK_MENU( menu ) );
 
+	// start radio thread
+	pthread_t radio_thread;
+
+	if(pthread_create(&radio_thread, NULL, radio_worker, NULL)) {
+		fprintf(stderr, "Error creating thread\n");
+		return 1;
+	}
+
+
 	mainloop = g_main_loop_new( NULL, FALSE );
 	g_main_loop_run( mainloop );
+
+	stop_thread();
+	printf("waiting for thread\n");
+	if(pthread_join(radio_thread, NULL)) {
+		fprintf(stderr, "Error joining thread\n");
+		return 2;
+
+	}
+
 
 	return 0;
 }
