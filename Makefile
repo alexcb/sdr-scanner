@@ -1,6 +1,6 @@
 CC=gcc
-CCFLAGS=-std=gnu11 -Wuninitialized -Wall -Werror -Wno-unused-label
-LDFLAGS=-lm -lpthread -lrtlsdr -lpulse -lpulse-simple -lncurses
+CCFLAGS=-std=gnu11 -Wuninitialized -Wall -Werror -Wno-unused-label `pkg-config --cflags ayatana-appindicator3-0.1`
+LDFLAGS=-lm -lpthread -lrtlsdr -lpulse -lpulse-simple -lncurses `pkg-config --libs ayatana-appindicator3-0.1`
 
 SERVERSRC=$(wildcard src/*.c)
 SERVEROBJ=$(SERVERSRC:%.c=%.o)

@@ -1454,7 +1454,7 @@ int parse_freqs( const char* path, struct controller_state* controller )
 	assert( 0 );
 }
 
-int main( int argc, char** argv )
+int main2( int argc, char** argv )
 {
 	struct sigaction sigact;
 	int r;
