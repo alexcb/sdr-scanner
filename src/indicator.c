@@ -1,24 +1,5 @@
-/*
-A small piece of sample code demonstrating a very simple application
-with an indicator.
-
-Copyright 2009 Canonical Ltd.
-
-Authors:
-	Ted Gould <ted@canonical.com>
-
-This program is free software: you can redistribute it and/or modify it
-under the terms of the GNU General Public License version 3, as published
-by the Free Software Foundation.
-
-This program is distributed in the hope that it will be useful, but
-WITHOUT ANY WARRANTY; without even the implied warranties of
-MERCHANTABILITY, SATISFACTORY QUALITY, or FITNESS FOR A PARTICULAR
-PURPOSE.  See the GNU General Public License for more details.
-
-You should have received a copy of the GNU General Public License along
-with this program.  If not, see <http://www.gnu.org/licenses/>.
-*/
+#include "rtl_fm_scanner.h"
+#include "should_stop.h"
 
 #include <libayatana-appindicator/app-indicator.h>
 #include <libdbusmenu-glib/menuitem.h>
@@ -26,40 +7,12 @@ with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 GMainLoop* mainloop = NULL;
 
-//#define LOCAL_ICON "/home/alex/libayatana-appindicator/example/simple-client-test-icon.png"
-// static void local_icon_toggle_cb( GtkWidget* widget, gpointer data )
-//{
-//	AppIndicator* ci = APP_INDICATOR( data );
-//
-//	if( gtk_check_menu_item_get_active( GTK_CHECK_MENU_ITEM( widget ) ) ) {
-//		app_indicator_set_icon_full( ci, LOCAL_ICON, "Local Icon" );
-//	}
-//	else {
-//		app_indicator_set_icon_full( ci, "indicator-messages", "System Icon" );
-//	}
-//
-//	return;
-//}
-
-int thread_stop_issued = 0;
-pthread_mutex_t thread_stop_mutex;
-
-int should_thread_stop(void) {
-  int ret = 0;
-  pthread_mutex_lock(&thread_stop_mutex);
-  ret = thread_stop_issued;
-  pthread_mutex_unlock(&thread_stop_mutex);
-  return ret;
-}
-
-void stop_thread() {
-  pthread_mutex_lock(&thread_stop_mutex);
-  thread_stop_issued = 1;
-  pthread_mutex_unlock(&thread_stop_mutex);
-}
 
 void *radio_worker(void *x_void_ptr)
 {
+	printf("starting background thread\n");
+	int res = init_radio( 162475000 );
+	printf("radio thread exited with %d\n", res);
 	int i = 0;
 	while( !should_thread_stop() ) {
 		i = (i%100) + 1;
@@ -118,25 +71,24 @@ int main( int argc, char** argv )
 	app_indicator_set_menu( ci, GTK_MENU( menu ) );
 
 	// start radio thread
-	pthread_t radio_thread;
-
-	if(pthread_create(&radio_thread, NULL, radio_worker, NULL)) {
-		fprintf(stderr, "Error creating thread\n");
+	stop_thread_init();
+	int res = init_radio( 162475000 );
+	if( res ) {
+		fprintf(stderr, "failed to start thread\n");
 		return 1;
 	}
-
 
 	mainloop = g_main_loop_new( NULL, FALSE );
 	g_main_loop_run( mainloop );
 
 	stop_thread();
+	stop_radio();
 	printf("waiting for thread\n");
-	if(pthread_join(radio_thread, NULL)) {
-		fprintf(stderr, "Error joining thread\n");
-		return 2;
+	//if(pthread_join(radio_thread, NULL)) {
+	//	fprintf(stderr, "Error joining thread\n");
+	//	return 2;
 
-	}
-
+	//}
 
 	return 0;
 }
