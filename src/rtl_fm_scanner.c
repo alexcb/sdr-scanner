@@ -41,13 +41,19 @@
 #include <pthread.h>
 #include <stdbool.h>
 
-#include <curses.h>
 #include <pulse/error.h>
 #include <pulse/simple.h>
 
 #include "rtl-sdr.h"
 
 pa_simple* pa_handle;
+
+struct output_state;
+
+struct radio_scanner {
+	int volume;
+	struct output_state* output_state;
+};
 
 double atofs( char* s )
 /* standard suffixes */
@@ -1246,7 +1252,8 @@ static void* output_thread_fn( void* arg )
 {
 	int error;
 	int res;
-	struct output_state* s = arg;
+	struct radio_scanner* rs = arg;
+	struct output_state* s = rs->output_state;
 	while( !do_exit ) {
 		//printf("lockwait\n");
 		// use timedwait and pad out under runs
@@ -1254,6 +1261,12 @@ static void* output_thread_fn( void* arg )
 		pthread_rwlock_rdlock( &s->rw );
 
 		//printf("write audio\n");
+		for(int i = 0; i < s->result_len; i++) {
+			int32_t tmp = s->result[i];
+			tmp *= rs->volume;
+			tmp /= 100;
+			s->result[i] = tmp;
+		}
 		res = pa_simple_write( pa_handle, s->result, 2 * s->result_len, &error );
 		if( res != 0 ) {
 			printf( "failed to write audio\n" );
@@ -1262,39 +1275,6 @@ static void* output_thread_fn( void* arg )
 		pthread_rwlock_unlock( &s->rw );
 	}
 	return 0;
-}
-
-static void* controller_thread_fn( void* arg )
-{
-	int key;
-	while( !do_exit ) {
-		key = getch();
-		pthread_mutex_lock( &controller.hop_m );
-		switch( key ) {
-		case 32: // spacebar
-			controller.scanning = !controller.scanning;
-			break;
-		case 115: // s
-			controller.skip = true;
-			controller.scanning = true;
-			break;
-		case 107: // up
-			controller.scanning = false;
-			controller.freq_adjust = 5000;
-			break;
-		case 106: // down
-			controller.scanning = false;
-			controller.freq_adjust = -5000;
-			break;
-		case 113: // q
-			do_exit = true;
-			break;
-		default:
-			printf( "unsupported key: %d\n", key );
-		}
-		pthread_mutex_unlock( &controller.hop_m );
-	}
-	return NULL;
 }
 
 static void optimal_settings( int freq, int rate )
@@ -1456,8 +1436,11 @@ int parse_freqs( const char* path, struct controller_state* controller )
 	assert( 0 );
 }
 
-int init_radio( int freq )
+int init_radio( struct radio_scanner **rs, int freq )
 {
+	*rs = malloc(sizeof(struct radio_scanner));
+	(**rs).volume = 100;
+	(**rs).output_state = &output;
 	//struct sigaction sigact;
 	int r;
 	int dev_given = 0;
@@ -1507,13 +1490,6 @@ int init_radio( int freq )
 		fprintf( stderr, "Failed to open rtlsdr device #%d.\n", dongle.dev_index );
 		exit( 1 );
 	}
-	//sigact.sa_handler = sighandler;
-	//sigemptyset( &sigact.sa_mask );
-	//sigact.sa_flags = 0;
-	//sigaction( SIGINT, &sigact, NULL );
-	//sigaction( SIGTERM, &sigact, NULL );
-	//sigaction( SIGQUIT, &sigact, NULL );
-	//sigaction( SIGPIPE, &sigact, NULL );
 
 	if( demod.deemph ) {
 		demod.deemph_a = (int)round( 1.0 / ( ( 1.0 - exp( -1.0 / ( demod.rate_out * 75e-6 ) ) ) ) );
@@ -1543,21 +1519,9 @@ int init_radio( int freq )
 
 	usleep( 1000000 );
 
-	//pthread_create( &controller.thread, NULL, controller_thread_fn, (void*)( &output ) );
-	pthread_create( &output.thread, NULL, output_thread_fn, (void*)( &output ) );
+	pthread_create( &output.thread, NULL, output_thread_fn, (void*)( *rs ) );
 	pthread_create( &demod.thread, NULL, demod_thread_fn, (void*)( &demod ) );
 	pthread_create( &dongle.thread, NULL, dongle_thread_fn, (void*)( &dongle ) );
-
-	//while( !do_exit ) {
-	//	usleep( 100000 );
-	//}
-
-	//if( do_exit ) {
-	//	fprintf( stderr, "\nUser cancel, exiting...\n" );
-	//}
-	//else {
-	//	fprintf( stderr, "\nLibrary error %d, exiting...\n", r );
-	//}
 
 	return 0;
 }
@@ -1584,3 +1548,7 @@ int stop_radio( void )
 
 }
 
+int set_radio_volume( struct radio_scanner *rs, int volume )
+{
+	rs->volume = volume;
+}
