@@ -1482,13 +1482,13 @@ int init_radio( struct radio_scanner **rs, int freq )
 	}
 
 	if( dongle.dev_index < 0 ) {
-		exit( 1 );
+		return 1;
 	}
 
 	r = rtlsdr_open( &dongle.dev, (uint32_t)dongle.dev_index );
 	if( r < 0 ) {
 		fprintf( stderr, "Failed to open rtlsdr device #%d.\n", dongle.dev_index );
-		exit( 1 );
+		return 1;
 	}
 
 	if( demod.deemph ) {

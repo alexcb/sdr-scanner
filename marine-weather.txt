@@ -1,0 +1,6 @@
+# duration of 2000 ~= 1 second
+# Freq       scan-squelch   audio-squelch   wait-duration    skip-duration
+162550000     800           100             10000            -1
+162400000     800           100             10000            -1
+162475000     800           100             10000            -1
+161650000     800           100             10000            -1
