@@ -1,4 +1,4 @@
-CC=gcc
+CC=gcc -Wall
 CCFLAGS=-std=gnu11 -Wuninitialized `pkg-config --cflags ayatana-appindicator3-0.1`
 LDFLAGS=-lm -lpthread -lrtlsdr -lpulse -lpulse-simple -lncurses `pkg-config --libs ayatana-appindicator3-0.1`
 

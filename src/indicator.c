@@ -187,6 +187,25 @@ static void quit_item_clicked_cb( GtkWidget* widget, gpointer data )
 	g_main_loop_quit( mainloop );
 }
 
+static void* twidler( void* arg )
+{
+	int i = 0;
+	GtkTreeIter iter;
+	for(;;) {
+		int j = 0;
+		if( gtk_tree_model_get_iter_first( GTK_TREE_MODEL(model), &iter ) ) {
+			do {
+				gtk_list_store_set( model, &iter, 
+						COLUMN_ACTIVE_ICON, i == j ? active_freq_pixbuf : NULL,
+						-1);
+				j++;
+			}while( gtk_tree_model_iter_next( GTK_TREE_MODEL(model), &iter ) );
+		}
+		i = (i+1) % 2;
+		usleep(100000);
+	}
+}
+
 int main( int argc, char** argv )
 {
 	GtkWidget* menu = NULL;
@@ -267,6 +286,9 @@ int main( int argc, char** argv )
 
 	gtk_widget_show_all(window);
 	//gtk_widget_show(window);
+
+	pthread_t thread;
+	pthread_create( &thread, NULL, twidler, (void*)( NULL ) );
 
 	mainloop = g_main_loop_new( NULL, FALSE );
 	g_main_loop_run( mainloop );
