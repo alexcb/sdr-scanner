@@ -50,7 +50,8 @@ pa_simple* pa_handle;
 
 struct output_state;
 
-struct radio_scanner {
+struct radio_scanner
+{
 	int volume;
 	struct output_state* output_state;
 };
@@ -1062,7 +1063,7 @@ static void* dongle_thread_fn( void* arg )
 	while( !do_exit ) {
 
 		// change freq
-		//if( next ) {
+		// if( next ) {
 		//	if( scanning ) {
 		//		if( ++freq_i >= controller.freq_len ) {
 		//			freq_i = 0;
@@ -1107,7 +1108,7 @@ static void* dongle_thread_fn( void* arg )
 		//	signal_found = false;
 		//}
 
-		//if( can_print || ( ii++ % 300 ) == 0 ) {
+		// if( can_print || ( ii++ % 300 ) == 0 ) {
 		//	int percentage = freq_i * 100 / controller.freq_len;
 		//	clear();
 		//	int mhz = freq / 1000000;
@@ -1133,16 +1134,16 @@ static void* dongle_thread_fn( void* arg )
 			return 0;
 		}
 
-		//printf("feed data %d\n", len);
+		// printf("feed data %d\n", len);
 		last_signal = rtlsdr_callback( buf, len, s );
 		if( last_signal == -1 ) {
 			printf( "dropped data %d\n", len );
 			continue;
 		}
 
-		//pthread_mutex_lock( &controller.hop_m );
+		// pthread_mutex_lock( &controller.hop_m );
 
-		//if( controller.freq_adjust ) {
+		// if( controller.freq_adjust ) {
 		//	freq += controller.freq_adjust;
 		//	controller.freq_adjust = 0;
 		//	next = true;
@@ -1153,14 +1154,14 @@ static void* dongle_thread_fn( void* arg )
 		//	continue;
 		//}
 
-		//if( controller.skip ) {
+		// if( controller.skip ) {
 		//	next = true;
 		//	controller.skip = false;
 		//	pthread_mutex_unlock( &controller.hop_m );
 		//	continue;
 		//}
 
-		//if( scanning != controller.scanning ) {
+		// if( scanning != controller.scanning ) {
 		//	scanning = controller.scanning;
 		//	can_print = true;
 		//	if( scanning ) {
@@ -1169,17 +1170,17 @@ static void* dongle_thread_fn( void* arg )
 		//		continue;
 		//	}
 		//}
-		//if( !controller.scanning ) {
+		// if( !controller.scanning ) {
 		//	pthread_mutex_unlock( &controller.hop_m );
 		//	continue;
 		//}
-		//pthread_mutex_unlock( &controller.hop_m );
+		// pthread_mutex_unlock( &controller.hop_m );
 
-		//if( blackout > 0 ) {
+		// if( blackout > 0 ) {
 		//	blackout--;
 		//	continue;
 		//}
-		//if( last_signal > scan_squelch ) {
+		// if( last_signal > scan_squelch ) {
 		//	// reset the timer
 		//	squelch_wait = open_duration;
 
@@ -1197,26 +1198,26 @@ static void* dongle_thread_fn( void* arg )
 		//	continue;
 		//}
 
-		//if( sample_wait > 0 ) {
+		// if( sample_wait > 0 ) {
 		//	sample_wait--;
 		//	continue;
 		//}
 
-		//if( skip_wait == 0 ) {
+		// if( skip_wait == 0 ) {
 		//	// printf("next due to skip_wait\n");
 		//	next = true;
 		//	continue;
 		//}
-		//if( skip_wait > 0 ) {
+		// if( skip_wait > 0 ) {
 		//	skip_wait--;
 		//}
 
-		//if( squelch_wait == 0 ) {
+		// if( squelch_wait == 0 ) {
 		//	// printf("next due to squelch_wait\n");
 		//	next = true;
 		//	continue;
 		//}
-		//if( squelch_wait > 0 ) {
+		// if( squelch_wait > 0 ) {
 		//	squelch_wait--;
 		//}
 	}
@@ -1255,13 +1256,13 @@ static void* output_thread_fn( void* arg )
 	struct radio_scanner* rs = arg;
 	struct output_state* s = rs->output_state;
 	while( !do_exit ) {
-		//printf("lockwait\n");
+		// printf("lockwait\n");
 		// use timedwait and pad out under runs
 		safe_cond_wait( &s->ready, &s->ready_m );
 		pthread_rwlock_rdlock( &s->rw );
 
-		//printf("write audio\n");
-		for(int i = 0; i < s->result_len; i++) {
+		// printf("write audio\n");
+		for( int i = 0; i < s->result_len; i++ ) {
 			int32_t tmp = s->result[i];
 			tmp *= rs->volume;
 			tmp /= 100;
@@ -1436,12 +1437,12 @@ int parse_freqs( const char* path, struct controller_state* controller )
 	assert( 0 );
 }
 
-int init_radio( struct radio_scanner **rs, int freq )
+int init_radio( struct radio_scanner** rs, int freq )
 {
-	*rs = malloc(sizeof(struct radio_scanner));
-	(**rs).volume = 100;
-	(**rs).output_state = &output;
-	//struct sigaction sigact;
+	*rs = malloc( sizeof( struct radio_scanner ) );
+	( **rs ).volume = 100;
+	( **rs ).output_state = &output;
+	// struct sigaction sigact;
 	int r;
 	int dev_given = 0;
 	int enable_biastee = 0;
@@ -1460,7 +1461,6 @@ int init_radio( struct radio_scanner **rs, int freq )
 		fprintf( stderr, __FILE__ ": pa_simple_new() failed: %s\n", pa_strerror( error ) );
 		assert( 0 );
 	}
-
 
 	dongle.demod_target->squelch_level = 0;
 
@@ -1531,13 +1531,13 @@ int stop_radio( void )
 	do_exit = 1;
 
 	rtlsdr_cancel_async( dongle.dev );
-	//pthread_join( dongle.thread, NULL );
+	// pthread_join( dongle.thread, NULL );
 	safe_cond_signal( &demod.ready, &demod.ready_m );
 	pthread_join( demod.thread, NULL );
 	safe_cond_signal( &output.ready, &output.ready_m );
 	pthread_join( output.thread, NULL );
-	//safe_cond_signal( &controller.hop, &controller.hop_m );
-	//pthread_join( controller.thread, NULL );
+	// safe_cond_signal( &controller.hop, &controller.hop_m );
+	// pthread_join( controller.thread, NULL );
 
 	// dongle_cleanup(&dongle);
 	demod_cleanup( &demod );
@@ -1545,10 +1545,9 @@ int stop_radio( void )
 	controller_cleanup( &controller );
 
 	rtlsdr_close( dongle.dev );
-
 }
 
-int set_radio_volume( struct radio_scanner *rs, int volume )
+int set_radio_volume( struct radio_scanner* rs, int volume )
 {
 	rs->volume = volume;
 }
