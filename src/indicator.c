@@ -11,141 +11,28 @@
 GMainLoop* mainloop = NULL;
 
 #define ICON_ACTIVE "/home/alex/gh/alexcb/sdr-scanner/radio-active.svg"
-#define ICON_SCANNING "/home/alex/gh/alexcb/sdr-scanner/radio-scanning.svg"
+#define ICON_SCANNING "/home/alex/gh/alexcb/sdr-scanner/radio-scanning.svg" // white
 #define ICON_MUTED "/home/alex/gh/alexcb/sdr-scanner/radio-muted.svg"
 #define ICON_BLACK "/home/alex/gh/alexcb/sdr-scanner/radio-black.svg"
 
 GtkWidget* window = NULL;
-static GtkTreeModel* model = NULL;
+GtkWidget* thetreeview = NULL;
 AppIndicator* ci = NULL;
-
-GdkPixbuf* active_freq_pixbuf = NULL;
-
-typedef struct
-{
-	const gboolean active;
-	const gboolean muted;
-	const guint frequency;
-	const guint last_active;
-	const gchar* description;
-} Channel;
-
-static Channel data[] = {
-	{TRUE, FALSE, 146520000, 0, "2m calling"},
-	{FALSE, FALSE, 446000000, 0, "70cm calling"},
-};
-
-enum
-{
-	COLUMN_ACTIVE_ICON,
-	COLUMN_MUTED,
-	COLUMN_FREQ,
-	COLUMN_LAST_ACTIVE,
-	COLUMN_DESCRIPTION,
-	NUM_COLUMNS
-};
-
-static GtkTreeModel* create_model( void )
-{
-	gint i = 0;
-	GtkListStore* store;
-	GtkTreeIter iter;
-
-	/* create list store */
-	store = gtk_list_store_new( NUM_COLUMNS,
-								GDK_TYPE_PIXBUF, // active icon
-								G_TYPE_BOOLEAN, // muted
-								G_TYPE_UINT, // freq
-								G_TYPE_UINT, // last active
-								G_TYPE_STRING // desc
-	);
-
-	/* add data to the list store */
-	for( i = 0; i < G_N_ELEMENTS( data ); i++ ) {
-		gtk_list_store_append( store, &iter );
-		gtk_list_store_set( store,
-							&iter,
-							COLUMN_ACTIVE_ICON,
-							i == 0 ? active_freq_pixbuf : NULL,
-							COLUMN_MUTED,
-							data[i].muted,
-							COLUMN_FREQ,
-							data[i].frequency,
-							COLUMN_LAST_ACTIVE,
-							data[i].last_active,
-							COLUMN_DESCRIPTION,
-							data[i].description,
-							-1 );
-	}
-
-	return GTK_TREE_MODEL( store );
-}
 
 static void muted_toggled( GtkCellRendererToggle* cell, gchar* path_str, gpointer data )
 {
-	GtkTreeModel* model = (GtkTreeModel*)data;
-	GtkTreeIter iter;
+	CustomList* model = (CustomList*)data;
+
 	GtkTreePath* path = gtk_tree_path_new_from_string( path_str );
-	gboolean muted;
+	gint selected_track = gtk_tree_path_get_indices( path )[0];
 
-	/* get toggled iter */
-	gtk_tree_model_get_iter( model, &iter, path );
-	gtk_tree_model_get( model, &iter, COLUMN_MUTED, &muted, -1 );
+	printf( "toggle mute: %d\n", selected_track );
 
-	/* do something with the value */
-	muted ^= 1;
+	CustomRecord* record;
+	record = model->rows[selected_track];
+	record->muted = !record->muted;
 
-	/* set new value */
-	gtk_list_store_set( GTK_LIST_STORE( model ), &iter, COLUMN_MUTED, muted, -1 );
-
-	/* clean up */
 	gtk_tree_path_free( path );
-}
-
-static void add_columns( GtkTreeView* treeview )
-{
-	GtkCellRenderer* renderer;
-	GtkTreeViewColumn* column;
-	GtkTreeModel* model = gtk_tree_view_get_model( treeview );
-
-	/* column for active icon */
-	renderer = gtk_cell_renderer_pixbuf_new();
-	column = gtk_tree_view_column_new_with_attributes(
-		"Active", renderer, "pixbuf", COLUMN_ACTIVE_ICON, NULL );
-	gtk_tree_view_append_column( treeview, column );
-
-	/* column for muted toggles */
-	renderer = gtk_cell_renderer_toggle_new();
-	g_signal_connect( renderer, "toggled", G_CALLBACK( muted_toggled ), model );
-
-	column =
-		gtk_tree_view_column_new_with_attributes( "mute", renderer, "active", COLUMN_MUTED, NULL );
-
-	/* set this column to a fixed sizing (of 50 pixels) */
-	gtk_tree_view_column_set_sizing( GTK_TREE_VIEW_COLUMN( column ), GTK_TREE_VIEW_COLUMN_FIXED );
-	gtk_tree_view_column_set_fixed_width( GTK_TREE_VIEW_COLUMN( column ), 50 );
-	gtk_tree_view_append_column( treeview, column );
-
-	/* column for bug numbers */
-	renderer = gtk_cell_renderer_text_new();
-	column =
-		gtk_tree_view_column_new_with_attributes( "Freq", renderer, "text", COLUMN_FREQ, NULL );
-	gtk_tree_view_column_set_sort_column_id( column, COLUMN_FREQ );
-	gtk_tree_view_append_column( treeview, column );
-
-	/* column for last heard */
-	renderer = gtk_cell_renderer_text_new();
-	column = gtk_tree_view_column_new_with_attributes(
-		"last heard", renderer, "text", COLUMN_LAST_ACTIVE, NULL );
-	gtk_tree_view_column_set_sort_column_id( column, COLUMN_FREQ );
-	gtk_tree_view_append_column( treeview, column );
-
-	/* column for description */
-	renderer = gtk_cell_renderer_text_new();
-	column = gtk_tree_view_column_new_with_attributes(
-		"Description", renderer, "text", COLUMN_DESCRIPTION, NULL );
-	gtk_tree_view_column_set_sort_column_id( column, COLUMN_DESCRIPTION );
-	gtk_tree_view_append_column( treeview, column );
 }
 
 static void mute_item_clicked_cb( GtkWidget* widget, gpointer data )
@@ -177,12 +64,16 @@ static void quit_item_clicked_cb( GtkWidget* widget, gpointer data )
 
 static void* twidler( void* arg )
 {
+	CustomList* custom_list = (CustomList*)arg;
 	int i = 0;
 	GtkTreeIter iter;
 	for( ;; ) {
-		int j = 0;
-		// TODO change this twidler to interact with custom-list; which is ultimately gojng to be
-		// the scanner thread if( gtk_tree_model_get_iter_first( GTK_TREE_MODEL( model ), &iter ) ) {
+		for( int j = 0; j < custom_list->num_rows; j++ ) {
+			custom_list->current_channel = j;
+			gtk_widget_queue_draw( thetreeview );
+			usleep( 100000 );
+		}
+		// if( gtk_tree_model_get_iter_first( GTK_TREE_MODEL( model ), &iter ) ) {
 		//	do {
 		//		gtk_list_store_set(
 		//			model, &iter, COLUMN_ACTIVE_ICON, i == j ? active_freq_pixbuf : NULL, -1 );
@@ -202,6 +93,36 @@ void on_row_activated( GtkTreeView* tree_view,
 	gint selected_track = gtk_tree_path_get_indices( path )[0];
 	printf( "activate %d\n", selected_track );
 }
+
+// typedef struct {
+//	GtkApplicationWindow parent_instance;
+//
+//	int current_width;
+//	int current_height;
+//	bool is_maximized;
+//	bool is_fullscreen;
+//} MyApplicationWindow;
+//
+// static void my_application_window_store_state (MyApplicationWindow *self)
+//{
+//	GSettings *settings = g_settings_new ("ca.mofo.sdr-scanner");
+//
+//	g_settings_set_int (settings, "width", self->current_width);
+//	g_settings_set_int (settings, "height", self->current_height);
+//	g_settings_set_boolean (settings, "is-maximized", self->is_maximized);
+//	g_settings_set_boolean (settings, "is-fullscreen", self->is_fullscreen);
+//}
+//
+// static void on_window_destroy (GtkWidget *widget)
+//{
+//  MyApplicationWindow *app_window = MY_APPLICATION_WINDOW (widget);
+//
+//  // store the state here
+//  my_application_window_store_state (app_window);
+//
+//  // chain up to the parent's implementation
+//  GTK_WIDGET_CLASS (my_application_window_parent_class)->destroy (widget);
+//}
 
 int main( int argc, char** argv )
 {
@@ -272,17 +193,16 @@ int main( int argc, char** argv )
 		GTK_SCROLLED_WINDOW( sw ), GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC );
 	gtk_box_pack_start( GTK_BOX( vbox ), sw, TRUE, TRUE, 0 );
 
-	// must be done before create_model due to global
-	active_freq_pixbuf = gdk_pixbuf_new_from_file( ICON_BLACK, NULL );
-	assert( active_freq_pixbuf );
-
 	CustomList* customlist;
 	customlist = custom_list_new();
+
+	assert( customlist->active_pixbuf = gdk_pixbuf_new_from_file( ICON_BLACK, NULL ) );
+	assert( customlist->audio_pixbuf = gdk_pixbuf_new_from_file( ICON_ACTIVE, NULL ) );
 
 	// TODO come up with better format
 	FILE* file = fopen( argv[1], "r" );
 	char line[256];
-	char* s, *q;
+	char *s, *q;
 	int freq;
 	while( fgets( line, sizeof( line ), file ) ) {
 		/* note that fgets don't strip the terminating \n, checking its
@@ -304,21 +224,28 @@ int main( int argc, char** argv )
 		}
 	}
 
-	// model = create_model();
 	GtkWidget* treeview = gtk_tree_view_new_with_model( customlist );
 	// gtk_tree_view_set_search_column( GTK_TREE_VIEW( treeview ), COLUMN_DESCRIPTION );
 	g_object_unref( customlist );
 
 	GtkCellRenderer* renderer;
 	GtkTreeViewColumn* col;
+
+	// active col
+	renderer = gtk_cell_renderer_pixbuf_new();
+	col = gtk_tree_view_column_new_with_attributes(
+		"Active", renderer, "pixbuf", CUSTOM_LIST_COL_ACTIVE, NULL );
+	gtk_tree_view_append_column( treeview, col );
+
+	// name col
 	renderer = gtk_cell_renderer_text_new();
 	col = gtk_tree_view_column_new();
-
 	gtk_tree_view_column_pack_start( col, renderer, TRUE );
 	gtk_tree_view_column_add_attribute( col, renderer, "text", CUSTOM_LIST_COL_NAME );
 	gtk_tree_view_column_set_title( col, "Name" );
 	gtk_tree_view_append_column( GTK_TREE_VIEW( treeview ), col );
 
+	// freq col
 	renderer = gtk_cell_renderer_text_new();
 	col = gtk_tree_view_column_new();
 	gtk_tree_view_column_pack_start( col, renderer, TRUE );
@@ -326,16 +253,30 @@ int main( int argc, char** argv )
 	gtk_tree_view_column_set_title( col, "freq" );
 	gtk_tree_view_append_column( GTK_TREE_VIEW( treeview ), col );
 
+	// muted col
+	renderer = gtk_cell_renderer_toggle_new();
+	g_signal_connect( renderer, "toggled", G_CALLBACK( muted_toggled ), customlist );
+	col = gtk_tree_view_column_new_with_attributes(
+		"mute", renderer, "active", CUSTOM_LIST_COL_MUTED, NULL );
+	/* set this column to a fixed sizing (of 50 pixels) */
+	gtk_tree_view_column_set_sizing( GTK_TREE_VIEW_COLUMN( col ), GTK_TREE_VIEW_COLUMN_FIXED );
+	gtk_tree_view_column_set_fixed_width( GTK_TREE_VIEW_COLUMN( col ), 50 );
+	gtk_tree_view_append_column( treeview, col );
+
 	g_signal_connect( treeview, "row-activated", G_CALLBACK( on_row_activated ), NULL );
 
 	gtk_container_add( GTK_CONTAINER( sw ), treeview );
-	// add_columns( GTK_TREE_VIEW( treeview ) );
 
+	gtk_window_set_default_size( GTK_WINDOW( window ), 400, 300 );
 	gtk_widget_show_all( window );
 	// gtk_widget_show(window);
+	//
+
+	// hack this is here so the twidler can redraw it
+	thetreeview = treeview;
 
 	pthread_t thread;
-	pthread_create( &thread, NULL, twidler, (void*)( NULL ) );
+	pthread_create( &thread, NULL, twidler, (void*)( customlist ) );
 
 	mainloop = g_main_loop_new( NULL, FALSE );
 	g_main_loop_run( mainloop );

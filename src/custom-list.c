@@ -142,7 +142,7 @@ static void custom_list_init( CustomList* custom_list )
 	// custom_list->column_types[0] = G_TYPE_STRING; /* CUSTOM_LIST_COL_NAME      */
 	// custom_list->column_types[1] = G_TYPE_UINT; /* CUSTOM_LIST_COL_YEAR_BORN */
 
-	custom_list->column_types[0] = G_TYPE_INT; // CUSTOM_LIST_COL_ACTIVE = 0,
+	custom_list->column_types[0] = GDK_TYPE_PIXBUF; // CUSTOM_LIST_COL_ACTIVE = 0,
 	custom_list->column_types[1] = G_TYPE_INT; // CUSTOM_LIST_COL_MUTED,
 	custom_list->column_types[2] = G_TYPE_INT; // CUSTOM_LIST_COL_FREQUENCY,
 	custom_list->column_types[3] = G_TYPE_STRING; // CUSTOM_LIST_COL_NAME,
@@ -331,7 +331,19 @@ custom_list_get_value( GtkTreeModel* tree_model, GtkTreeIter* iter, gint column,
 		//	break;
 
 	case CUSTOM_LIST_COL_ACTIVE:
-		g_value_set_int( value, record->active ? 1 : 0 );
+		// g_value_init (value, GDK_TYPE_PIXBUF);
+		if( record->pos == custom_list->current_channel ) {
+			if( custom_list->current_audio ) {
+				g_value_set_object( value, custom_list->audio_pixbuf );
+			}
+			else {
+				g_value_set_object( value, custom_list->active_pixbuf );
+			}
+		}
+		else {
+			// no icon
+			g_value_set_object( value, NULL );
+		}
 		break;
 
 	case CUSTOM_LIST_COL_MUTED:

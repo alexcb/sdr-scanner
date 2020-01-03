@@ -36,7 +36,6 @@ typedef struct _CustomListClass CustomListClass;
 
 struct _CustomRecord
 {
-	bool active;
 	bool muted;
 	int frequency;
 	time_t last_active;
@@ -60,6 +59,12 @@ struct _CustomList
 	guint num_rows; /* number of rows that we have   */
 	CustomRecord** rows; /* a dynamically allocated array of pointers to
 						  *   the CustomRecord structure for each row    */
+
+	GdkPixbuf* audio_pixbuf; // icon to show when audio is on this channel
+	GdkPixbuf* active_pixbuf; // icon to show when we are checking this channel for audio
+
+	int current_channel; // which channel is active
+	bool current_audio; // true if audio; false if squelched
 
 	/* These two fields are not absolutely necessary, but they    */
 	/*   speed things up a bit in our get_value implementation    */
