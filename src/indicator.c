@@ -267,7 +267,7 @@ int main( int argc, char** argv )
 
 	gtk_container_add( GTK_CONTAINER( sw ), treeview );
 
-	gtk_window_set_default_size( GTK_WINDOW( window ), 400, 300 );
+	gtk_window_set_default_size( GTK_WINDOW( window ), 700, 700 );
 	gtk_widget_show_all( window );
 	// gtk_widget_show(window);
 	//
