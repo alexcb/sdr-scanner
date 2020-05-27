@@ -1083,6 +1083,7 @@ static void* dongle_thread_fn( void* arg )
 		}
 
 		pthread_rwlock_unlock( &dongle.rw );
+		usleep(1);
 
 	}
 
@@ -1332,10 +1333,6 @@ int init_radio( struct radio_scanner** rs )
 
 	dongle.demod_target->squelch_level = 0;
 
-	//optimal_settings( freq, dongle.demod_target->rate_in );
-	//rtlsdr_set_center_freq( dongle.dev, dongle.freq );
-	//verbose_reset_buffer( dongle.dev );
-
 	/* quadruple sample_rate to limit to Δθ to ±π/2 */
 	demod.rate_in *= demod.post_downsample;
 
@@ -1379,12 +1376,6 @@ int init_radio( struct radio_scanner** rs )
 	verbose_ppm_set( dongle.dev, dongle.ppm_error );
 
 	/* Reset endpoint before we start reading from it (mandatory) */
-	verbose_reset_buffer( dongle.dev );
-
-	//optimal_settings( freq, demod.rate_in );
-	//verbose_set_frequency( dongle.dev, dongle.freq );
-	//verbose_set_sample_rate( dongle.dev, dongle.rate );
-
 	usleep( 1000000 );
 
 	pthread_create( &output.thread, NULL, output_thread_fn, (void*)( *rs ) );
@@ -1429,6 +1420,7 @@ int set_radio_freq( struct radio_scanner* rs, int freq )
 	optimal_settings( freq, dongle.demod_target->rate_in );
 	rtlsdr_set_center_freq( dongle.dev, dongle.freq );
 	verbose_set_sample_rate( dongle.dev, dongle.rate );
+	verbose_reset_buffer( dongle.dev );
 
 	pthread_rwlock_unlock( &dongle.rw );
 	printf("set_radio_freq end\n");

@@ -165,7 +165,7 @@ int main( int argc, char** argv )
 		printf("go %d\n", freqs[i%2]);
 		set_radio_freq( &rs, freqs[i%2] );
 		i++;
-		sleep(100);
+		usleep( 1000000 );
 	}
 
 	ci = app_indicator_new(
