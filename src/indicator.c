@@ -50,6 +50,16 @@ static void mute_item_clicked_cb( GtkWidget* widget, gpointer data )
 	}
 }
 
+static void scan_button_toggled( GtkWidget* widget, gpointer data )
+{
+	gboolean toggled = gtk_toggle_button_get_active( widget );
+	if( toggled ) {
+		printf( "scan should be on\n" );
+	} else {
+		printf( "scan should be off\n" );
+	}
+}
+
 static void channels_item_clicked_cb( GtkWidget* widget, gpointer data )
 {
 	printf( "raise it\n" );
@@ -135,13 +145,27 @@ int main( int argc, char** argv )
 
 	gtk_init( &argc, &argv );
 
+	int cbc = 88100000;
+	int vhf_marine_1 = 162475000;
+	int vhf_marine_2 = 162400000;
+
+	int freqs[] = {162475000, 162400000};
+
 	// start radio thread
 	stop_thread_init();
 	struct radio_scanner* rs;
-	int res = init_radio( &rs, 162475000 );
+	int res = init_radio( &rs );
 	if( res ) {
 		fprintf( stderr, "failed to start thread\n" );
 		// return 1;
+	}
+
+	int i = 0;
+	for(;;) {
+		printf("go %d\n", freqs[i%2]);
+		set_radio_freq( &rs, freqs[i%2] );
+		i++;
+		sleep(100);
 	}
 
 	ci = app_indicator_new(
@@ -184,8 +208,12 @@ int main( int argc, char** argv )
 	GtkWidget* vbox = gtk_box_new( GTK_ORIENTATION_VERTICAL, 8 );
 	gtk_container_add( GTK_CONTAINER( window ), vbox );
 
-	GtkWidget* label = gtk_label_new( "hello scanner" );
-	gtk_box_pack_start( GTK_BOX( vbox ), label, FALSE, FALSE, 0 );
+	//GtkWidget* label = gtk_label_new( "hello scanner" );
+	//gtk_box_pack_start( GTK_BOX( vbox ), label, FALSE, FALSE, 0 );
+
+	GtkWidget* scan_button = gtk_toggle_button_new_with_label( "scan" );
+	g_signal_connect( scan_button, "toggled", G_CALLBACK( scan_button_toggled ), rs );
+	gtk_box_pack_start( GTK_BOX( vbox ), scan_button, FALSE, FALSE, 0 );
 
 	GtkWidget* sw = gtk_scrolled_window_new( NULL, NULL );
 	gtk_scrolled_window_set_shadow_type( GTK_SCROLLED_WINDOW( sw ), GTK_SHADOW_ETCHED_IN );

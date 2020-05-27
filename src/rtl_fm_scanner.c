@@ -372,6 +372,9 @@ struct dongle_state
 	int offset_tuning;
 	int direct_sampling;
 	int mute;
+	pthread_rwlock_t rw;
+	pthread_cond_t ready;
+	pthread_mutex_t ready_m;
 	struct demod_state* demod_target;
 };
 
@@ -440,7 +443,7 @@ struct freq
 struct controller_state
 {
 	int exit_flag;
-	pthread_t thread;
+	//pthread_t thread;
 	struct freq freqs[FREQUENCIES_LIMIT];
 	int freq_len;
 	int wb_mode;
@@ -449,6 +452,7 @@ struct controller_state
 	bool scanning;
 	bool skip;
 	int freq_adjust;
+	pthread_rwlock_t rw;
 };
 
 // multiple of these, eventually
@@ -961,6 +965,7 @@ void full_demod( struct demod_state* d )
 		d->signal = sr;
 	}
 
+	//printf("sr: %d\n", sr);
 	if( sr < d->squelch_level ) {
 		// printf("muting due to %d < %d\n", sr, d->squelch_level);
 		for( i = 0; i < d->lp_len; i++ ) {
@@ -993,6 +998,7 @@ static int rtlsdr_callback( unsigned char* buf, uint32_t len, void* ctx )
 	int i;
 	struct dongle_state* s = ctx;
 	struct demod_state* d = s->demod_target;
+	struct output_state* o = d->output_target;
 	int signal;
 
 	if( !s->offset_tuning ) {
@@ -1002,23 +1008,18 @@ static int rtlsdr_callback( unsigned char* buf, uint32_t len, void* ctx )
 		s->buf16[i] = (int16_t)buf[i] - 127;
 	}
 
-	while( 1 ) {
-		pthread_rwlock_wrlock( &d->rw );
-		if( d->signal == -1 ) {
-			pthread_rwlock_unlock( &d->rw );
-			safe_cond_signal( &d->ready, &d->ready_m );
-			usleep( 100 );
-			continue;
-		}
-		memcpy( d->lowpassed, s->buf16, 2 * len );
-		d->lp_len = len;
-		signal = d->signal;
-		d->signal = -1;
-		pthread_rwlock_unlock( &d->rw );
-		break;
-	}
-	safe_cond_signal( &d->ready, &d->ready_m );
-	return signal;
+	memcpy( d->lowpassed, s->buf16, 2 * len );
+	d->lp_len = len;
+
+	full_demod( d );
+
+	pthread_rwlock_wrlock( &o->rw );
+	memcpy( o->result, d->result, 2 * d->result_len );
+	o->result_len = d->result_len;
+	pthread_rwlock_unlock( &o->rw );
+	safe_cond_signal( &o->ready, &o->ready_m );
+
+	return 1;
 }
 
 static void optimal_settings( int freq, int rate );
@@ -1060,73 +1061,11 @@ static void* dongle_thread_fn( void* arg )
 
 	int ii = 0;
 
+	safe_cond_wait( &s->ready, &s->ready_m );
+
 	while( !do_exit ) {
 
-		// change freq
-		// if( next ) {
-		//	if( scanning ) {
-		//		if( ++freq_i >= controller.freq_len ) {
-		//			freq_i = 0;
-		//		}
-
-		//		blackout = BLACKOUT_PERIOD;
-		//		sample_wait = SAMPLE_PERIOD;
-		//		skip_wait = controller.freqs[freq_i].skip_duration;
-		//		squelch_wait = 0;
-
-		//		freq = controller.freqs[freq_i].freq;
-		//		freq_desc = controller.freqs[freq_i].desc;
-		//		scan_squelch = controller.freqs[freq_i].scan_squelch;
-		//		open_duration = controller.freqs[freq_i].open_duration;
-		//		open_squelch = controller.freqs[freq_i].open_squelch;
-
-		//		// set to huge value to silence it during blackout.
-		//		s->demod_target->squelch_level = 10000;
-		//	}
-		//	else {
-		//		blackout = 0;
-		//		sample_wait = 0;
-		//		skip_wait = -1;
-		//		squelch_wait = -1;
-		//		freq_desc = "manual";
-
-		//		open_duration = -1;
-		//		open_squelch = 0;
-		//		s->demod_target->squelch_level = open_squelch;
-		//	}
-
-		//	next = 0;
-		//	can_print = true;
-
-		//	// TODO lock
-
-		//	assert( freq > 100000000 );
-		//	optimal_settings( freq, s->demod_target->rate_in );
-		//	rtlsdr_set_center_freq( s->dev, s->freq );
-		//	verbose_reset_buffer( s->dev );
-		//	// printf("set audio squelch to %d\n", s->demod_target->squelch_level);
-		//	signal_found = false;
-		//}
-
-		// if( can_print || ( ii++ % 300 ) == 0 ) {
-		//	int percentage = freq_i * 100 / controller.freq_len;
-		//	clear();
-		//	int mhz = freq / 1000000;
-		//	int khz = ( freq / 1000 ) % 1000;
-		//	mvprintw( 0,
-		//			  0,
-		//			  "%03d.%03d MHz% 20s [% 30s]; signal: %04d; scan: %02d%%%s\n",
-		//			  mhz,
-		//			  khz,
-		//			  signal_found ? " [squelch-open]" : "",
-		//			  freq_desc,
-		//			  last_signal,
-		//			  percentage,
-		//			  scanning ? " [scanning]" : " [manual]" );
-		//	mvprintw( 4, 0, "keys: j/k +/- 5kHz; [s]kip; spacebar: scanner pause; [q]uit" );
-		//	refresh();
-		//	can_print = false;
-		//}
+		pthread_rwlock_wrlock( &dongle.rw );
 
 		int r = rtlsdr_read_sync( s->dev, buf, BUF_SIZE, &len );
 		if( r < 0 ) {
@@ -1134,120 +1073,45 @@ static void* dongle_thread_fn( void* arg )
 			return 0;
 		}
 
+		//printf("buf %d\n", len);
+		//continue;
+
 		// printf("feed data %d\n", len);
 		last_signal = rtlsdr_callback( buf, len, s );
 		if( last_signal == -1 ) {
 			printf( "dropped data %d\n", len );
-			continue;
 		}
 
-		// pthread_mutex_lock( &controller.hop_m );
+		pthread_rwlock_unlock( &dongle.rw );
 
-		// if( controller.freq_adjust ) {
-		//	freq += controller.freq_adjust;
-		//	controller.freq_adjust = 0;
-		//	next = true;
-		//	assert( controller.scanning == false );
-		//	scanning = false;
-		//	can_print = true;
-		//	pthread_mutex_unlock( &controller.hop_m );
-		//	continue;
-		//}
-
-		// if( controller.skip ) {
-		//	next = true;
-		//	controller.skip = false;
-		//	pthread_mutex_unlock( &controller.hop_m );
-		//	continue;
-		//}
-
-		// if( scanning != controller.scanning ) {
-		//	scanning = controller.scanning;
-		//	can_print = true;
-		//	if( scanning ) {
-		//		pthread_mutex_unlock( &controller.hop_m );
-		//		next = true;
-		//		continue;
-		//	}
-		//}
-		// if( !controller.scanning ) {
-		//	pthread_mutex_unlock( &controller.hop_m );
-		//	continue;
-		//}
-		// pthread_mutex_unlock( &controller.hop_m );
-
-		// if( blackout > 0 ) {
-		//	blackout--;
-		//	continue;
-		//}
-		// if( last_signal > scan_squelch ) {
-		//	// reset the timer
-		//	squelch_wait = open_duration;
-
-		//	// TODO lock
-		//	s->demod_target->squelch_level = open_squelch;
-
-		//	if( !signal_found ) {
-		//		// dont refresh too quickly
-		//		can_print = true;
-		//	}
-
-		//	// since we heard something, leave the channel open for longer
-		//	squelch_wait = skip_wait;
-		//	signal_found = true;
-		//	continue;
-		//}
-
-		// if( sample_wait > 0 ) {
-		//	sample_wait--;
-		//	continue;
-		//}
-
-		// if( skip_wait == 0 ) {
-		//	// printf("next due to skip_wait\n");
-		//	next = true;
-		//	continue;
-		//}
-		// if( skip_wait > 0 ) {
-		//	skip_wait--;
-		//}
-
-		// if( squelch_wait == 0 ) {
-		//	// printf("next due to squelch_wait\n");
-		//	next = true;
-		//	continue;
-		//}
-		// if( squelch_wait > 0 ) {
-		//	squelch_wait--;
-		//}
 	}
 
 	return 0;
 }
 
-static void* demod_thread_fn( void* arg )
-{
-	struct demod_state* d = arg;
-	struct output_state* o = d->output_target;
-	while( !do_exit ) {
-		safe_cond_wait( &d->ready, &d->ready_m );
-		pthread_rwlock_wrlock( &d->rw );
-		d->signal = 0;
-		// printf("process data\n");
-		full_demod( d );
-		pthread_rwlock_unlock( &d->rw );
-		if( d->exit_flag ) {
-			do_exit = 1;
-		}
-
-		pthread_rwlock_wrlock( &o->rw );
-		memcpy( o->result, d->result, 2 * d->result_len );
-		o->result_len = d->result_len;
-		pthread_rwlock_unlock( &o->rw );
-		safe_cond_signal( &o->ready, &o->ready_m );
-	}
-	return 0;
-}
+//static void* demod_thread_fn( void* arg )
+//{
+//	struct demod_state* d = arg;
+//	struct output_state* o = d->output_target;
+//	while( !do_exit ) {
+//		safe_cond_wait( &d->ready, &d->ready_m );
+//		pthread_rwlock_wrlock( &d->rw );
+//		d->signal = 0;
+//		// printf("process data\n");
+//		full_demod( d );
+//		pthread_rwlock_unlock( &d->rw );
+//		if( d->exit_flag ) {
+//			do_exit = 1;
+//		}
+//
+//		pthread_rwlock_wrlock( &o->rw );
+//		memcpy( o->result, d->result, 2 * d->result_len );
+//		o->result_len = d->result_len;
+//		pthread_rwlock_unlock( &o->rw );
+//		safe_cond_signal( &o->ready, &o->ready_m );
+//	}
+//	return 0;
+//}
 
 static void* output_thread_fn( void* arg )
 {
@@ -1314,6 +1178,9 @@ void dongle_init( struct dongle_state* s )
 	s->direct_sampling = 0;
 	s->offset_tuning = 0;
 	s->demod_target = &demod;
+	pthread_rwlock_init( &s->rw, NULL );
+	pthread_cond_init( &s->ready, NULL );
+	pthread_mutex_init( &s->ready_m, NULL );
 }
 
 void demod_init( struct demod_state* s )
@@ -1372,6 +1239,7 @@ void controller_init( struct controller_state* s )
 	s->skip = false;
 	pthread_cond_init( &s->hop, NULL );
 	pthread_mutex_init( &s->hop_m, NULL );
+	pthread_mutex_init( &s->rw, NULL );
 }
 
 void controller_cleanup( struct controller_state* s )
@@ -1437,7 +1305,7 @@ int parse_freqs( const char* path, struct controller_state* controller )
 	assert( 0 );
 }
 
-int init_radio( struct radio_scanner** rs, int freq )
+int init_radio( struct radio_scanner** rs )
 {
 	*rs = malloc( sizeof( struct radio_scanner ) );
 	( **rs ).volume = 100;
@@ -1464,9 +1332,9 @@ int init_radio( struct radio_scanner** rs, int freq )
 
 	dongle.demod_target->squelch_level = 0;
 
-	optimal_settings( freq, dongle.demod_target->rate_in );
-	rtlsdr_set_center_freq( dongle.dev, dongle.freq );
-	verbose_reset_buffer( dongle.dev );
+	//optimal_settings( freq, dongle.demod_target->rate_in );
+	//rtlsdr_set_center_freq( dongle.dev, dongle.freq );
+	//verbose_reset_buffer( dongle.dev );
 
 	/* quadruple sample_rate to limit to Δθ to ±π/2 */
 	demod.rate_in *= demod.post_downsample;
@@ -1513,14 +1381,14 @@ int init_radio( struct radio_scanner** rs, int freq )
 	/* Reset endpoint before we start reading from it (mandatory) */
 	verbose_reset_buffer( dongle.dev );
 
-	optimal_settings( freq, demod.rate_in );
-	verbose_set_frequency( dongle.dev, dongle.freq );
-	verbose_set_sample_rate( dongle.dev, dongle.rate );
+	//optimal_settings( freq, demod.rate_in );
+	//verbose_set_frequency( dongle.dev, dongle.freq );
+	//verbose_set_sample_rate( dongle.dev, dongle.rate );
 
 	usleep( 1000000 );
 
 	pthread_create( &output.thread, NULL, output_thread_fn, (void*)( *rs ) );
-	pthread_create( &demod.thread, NULL, demod_thread_fn, (void*)( &demod ) );
+	//pthread_create( &demod.thread, NULL, demod_thread_fn, (void*)( &demod ) );
 	pthread_create( &dongle.thread, NULL, dongle_thread_fn, (void*)( &dongle ) );
 
 	return 0;
@@ -1550,4 +1418,22 @@ int stop_radio( void )
 int set_radio_volume( struct radio_scanner* rs, int volume )
 {
 	rs->volume = volume;
+	return 0;
+}
+
+int set_radio_freq( struct radio_scanner* rs, int freq )
+{
+	printf("set_radio_freq start %d\n", freq);
+	pthread_rwlock_wrlock( &dongle.rw );
+
+	optimal_settings( freq, dongle.demod_target->rate_in );
+	rtlsdr_set_center_freq( dongle.dev, dongle.freq );
+	verbose_set_sample_rate( dongle.dev, dongle.rate );
+
+	pthread_rwlock_unlock( &dongle.rw );
+	printf("set_radio_freq end\n");
+
+	safe_cond_signal( &dongle.ready, &dongle.ready_m );
+
+	return 0;
 }
