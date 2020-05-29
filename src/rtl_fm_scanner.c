@@ -1024,7 +1024,7 @@ static int rtlsdr_callback( unsigned char* buf, uint32_t len, void* ctx )
 
 static void optimal_settings( int freq, int rate );
 
-#define BUF_SIZE 102400
+#define BUF_SIZE 1024
 
 // wait this many iterations before checking signal strenght
 // this is to reduce chirps which happen between freq changes
@@ -1081,7 +1081,6 @@ static void* dongle_thread_fn( void* arg )
 
 		pthread_rwlock_unlock( &dongle.rw );
 		usleep(1);
-
 	}
 
 	return 0;
