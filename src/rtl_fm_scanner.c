@@ -1024,7 +1024,7 @@ static int rtlsdr_callback( unsigned char* buf, uint32_t len, void* ctx )
 
 static void optimal_settings( int freq, int rate );
 
-#define BUF_SIZE 1024
+#define BUF_SIZE 102400
 
 // wait this many iterations before checking signal strenght
 // this is to reduce chirps which happen between freq changes
@@ -1073,7 +1073,7 @@ static void* dongle_thread_fn( void* arg )
 			return 0;
 		}
 
-		//printf("buf %d\n", len);
+		printf("buf %d\n", len);
 		//continue;
 
 		// printf("feed data %d\n", len);
@@ -1412,8 +1412,11 @@ int set_radio_volume( struct radio_scanner* rs, int volume )
 	return 0;
 }
 
+#define BUFFER_DUMP			(1<<12)
 int set_radio_freq( struct radio_scanner* rs, int freq )
 {
+	unsigned char buf[BUFFER_DUMP];
+	static int i = 0;
 	printf("set_radio_freq start %d\n", freq);
 	pthread_rwlock_wrlock( &dongle.rw );
 
@@ -1422,10 +1425,24 @@ int set_radio_freq( struct radio_scanner* rs, int freq )
 	verbose_set_sample_rate( dongle.dev, dongle.rate );
 	verbose_reset_buffer( dongle.dev );
 
+	usleep(5000);
+
+	// ignore buffer after reading to let it settle
+	int len;
+	int r = rtlsdr_read_sync( dongle.dev, buf, BUFFER_DUMP, &len );
+	if( r < 0 ) {
+		printf( "failed to read: %d\n", r );
+	}
+
 	pthread_rwlock_unlock( &dongle.rw );
 	printf("set_radio_freq end\n");
 
 	safe_cond_signal( &dongle.ready, &dongle.ready_m );
 
 	return 0;
+}
+
+int get_radio_signal_strength( struct radio_scanner* rs )
+{
+	return demod.signal;
 }

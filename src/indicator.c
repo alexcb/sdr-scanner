@@ -19,6 +19,8 @@ GtkWidget* window = NULL;
 GtkWidget* thetreeview = NULL;
 AppIndicator* ci = NULL;
 
+struct radio_scanner* rs = NULL;
+
 static void muted_toggled( GtkCellRendererToggle* cell, gchar* path_str, gpointer data )
 {
 	CustomList* model = (CustomList*)data;
@@ -72,16 +74,49 @@ static void quit_item_clicked_cb( GtkWidget* widget, gpointer data )
 	g_main_loop_quit( mainloop );
 }
 
+// this thread controlls the scanner freq selection + telling the UI which freq is selected
 static void* twidler( void* arg )
 {
+
+	//int freqs[] = {162475000, 162400000};
+
+	//{
+	//	int i = 0;
+	//	for(;;) {
+	//		printf("go %d\n", freqs[i%2]);
+	//		set_radio_freq( &rs, freqs[i%2] );
+	//			usleep( 1000 );
+	//			printf( "signal %d\n", get_radio_signal_strength( &rs ) );
+	//		i++;
+	//		usleep( 1000000 );
+	//	}
+	//}
+
+	
 	CustomList* custom_list = (CustomList*)arg;
 	int i = 0;
+	int j = 0;
+	bool needs_tune = true;
 	GtkTreeIter iter;
 	for( ;; ) {
-		for( int j = 0; j < custom_list->num_rows; j++ ) {
+		for( ;; ) {
+			if( needs_tune ) {
+			printf("%d\n", custom_list->rows[j]->frequency);
+			set_radio_freq( &rs, custom_list->rows[j]->frequency );
+			needs_tune = false;
+			}
+
 			custom_list->current_channel = j;
 			gtk_widget_queue_draw( thetreeview );
-			usleep( 100000 );
+			//usleep( 100000 );
+			sleep(1);
+			int sig = get_radio_signal_strength( &rs );
+			if( sig > 200 ) {
+				printf("found signal\n");
+				continue;
+			}
+			j = (j+1) % custom_list->num_rows;
+			needs_tune = true;
 		}
 		// if( gtk_tree_model_get_iter_first( GTK_TREE_MODEL( model ), &iter ) ) {
 		//	do {
@@ -145,27 +180,18 @@ int main( int argc, char** argv )
 
 	gtk_init( &argc, &argv );
 
-	int cbc = 88100000;
-	int vhf_marine_1 = 162475000;
-	int vhf_marine_2 = 162400000;
+	//int cbc = 88100000;
+	//int vhf_marine_1 = 162475000;
+	//int vhf_marine_2 = 162400000;
 
-	int freqs[] = {162475000, 162400000};
+	//int freqs[] = {162475000, 162400000};
 
 	// start radio thread
 	stop_thread_init();
-	struct radio_scanner* rs;
 	int res = init_radio( &rs );
 	if( res ) {
 		fprintf( stderr, "failed to start thread\n" );
 		// return 1;
-	}
-
-	int i = 0;
-	for(;;) {
-		printf("go %d\n", freqs[i%2]);
-		set_radio_freq( &rs, freqs[i%2] );
-		i++;
-		usleep( 1000000 );
 	}
 
 	ci = app_indicator_new(
