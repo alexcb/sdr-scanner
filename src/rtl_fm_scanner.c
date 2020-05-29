@@ -1073,9 +1073,6 @@ static void* dongle_thread_fn( void* arg )
 			return 0;
 		}
 
-		printf("buf %d\n", len);
-		//continue;
-
 		// printf("feed data %d\n", len);
 		last_signal = rtlsdr_callback( buf, len, s );
 		if( last_signal == -1 ) {
