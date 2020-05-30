@@ -719,15 +719,27 @@ void plot_dbms(int low_freq, int step, int num_steps, double *dbms)
 	return 0;
 }
 
+
 int step = (double)rate / (double)(bin_len);
-double dbms[16384];
+double *dbms = NULL; //[16384];
 //int freq = 162500000;
-int freq = 144000000;
+//int freq = 144000000;
+int freq_low = 144000000;
+int freq_high = 146000000;
+int num_scans = 0;
 
 static void* radioscanner( void* arg )
 {
+	int scan_bw = freq_high - freq_low;
+	num_scans = ( scan_bw / rate ) + 1;
+	dbms = malloc(sizeof(double) * bin_len * num_scans);
 	for(;;) {
-		scanner(freq, dbms);
+		for( int i = 0; i < num_scans; i++ ) {
+			i = 1;
+			int freq = freq_low + i * rate;
+			scanner(freq, dbms + i*bin_len);
+			break;
+		}
 		//print_loudest(freq, step, bin_len, dbms);
 		gtk_widget_queue_draw( da );
 		usleep(10000);	
@@ -772,8 +784,11 @@ int main(int argc, char **argv)
 	//scanner(freq, dbms);
 	//print_loudest(freq, step, bin_len, dbms);
 
+	// TODO HACK to allow thread to init stuff before continuing
+	usleep(100);
+
 	gtk_init( &argc, &argv );
-	plot_dbms(freq, step, bin_len, dbms);
+	plot_dbms(freq_low, step, bin_len*num_scans, dbms);
 
 
 	rtlsdr_close(dev);
