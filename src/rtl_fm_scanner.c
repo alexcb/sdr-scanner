@@ -602,24 +602,34 @@ static gboolean mouse_moved(GtkWidget *widget,GdkEvent *event,gpointer user_data
 	}
 }
 
-//static gboolean mouse_scroll(GtkWidget *widget,GdkEvent *event,gpointer user_data)
-//{
-//	if (event->type==GDK_SCROLL) {
-//		GdkEventScroll* e=(GdkEventScroll*)event;
-//		gdouble x, y;
-//		gdk_event_get_scroll_deltas( e, &x, &y );
-//		printf("scroll dir: %d\n", e->direction );
-//		printf("scroll x: (%lf %lf)\n", e->x, x );
-//		printf("scroll y: (%lf %lf)\n", e->y, y );
-//		gtk_widget_queue_draw( da );
-//	}
-//}
+double zoom_dbm = 1.0;
+static gboolean mouse_scroll(GtkWidget *widget,GdkEvent *event,gpointer user_data)
+{
+	if (event->type==GDK_SCROLL) {
+		GdkEventScroll* e=(GdkEventScroll*)event;
+		gdouble x, y;
+		gdk_event_get_scroll_deltas( e, &x, &y );
+		if( e->direction == GDK_SCROLL_UP ) {
+			zoom_dbm += 0.1;
+		}
+		if( e->direction == GDK_SCROLL_DOWN ) {
+			zoom_dbm -= 0.1;
+		}
+		printf("scroll dir: %d\n", e->direction );
+		printf("scroll x: (%lf %lf)\n", e->x, x );
+		printf("scroll y: (%lf %lf)\n", e->y, y );
+		gtk_widget_queue_draw( da );
+	}
+}
 
 
 int sigs_low_freq;
 int sigs_num_steps;
 int sigs_step;
 double *sigs;
+
+double clamp_min_dbm = -100.0;
+double clamp_max_dbm = 0.0;
 
 static gboolean
 checkerboard_draw (GtkWidget *da,
@@ -648,14 +658,23 @@ checkerboard_draw (GtkWidget *da,
 	printf("points to plot: %d\n", sigs_num_steps);
 	double scale = (double) sigs_num_steps / (double)width;
 
+	double clamp_range = clamp_max_dbm - clamp_min_dbm;
+
 	//printf("draw %d %d\n", width, width_per_step);
 	for( i = 0; i < width; i++ ) {
 		int ii = (int)(scale*i);
 		double ss = sigs[ii];
+		if( ss < clamp_min_dbm ) { ss = clamp_min_dbm; }
+		if( ss > clamp_max_dbm ) { ss = clamp_max_dbm; }
+		ss -= clamp_min_dbm;
+		ss /= (clamp_max_dbm - clamp_min_dbm);
+
+		ss *= 200.0;
+		//ss *= zoom_dbm;
+
+		int y = 200 - ss; // * 300.0;
 
 		cairo_set_source_rgb( cr, 0, 0, 0 );
-
-		int y = 200 - ss;
 
 		cairo_rectangle( cr, i, y, 1, 1);
 		cairo_fill (cr);
@@ -726,8 +745,8 @@ void plot_dbms(int low_freq, int step, int num_steps, double *dbms)
 
 	g_signal_connect (da, "draw", G_CALLBACK(checkerboard_draw), NULL);
     g_signal_connect (da, "motion-notify-event", G_CALLBACK(mouse_moved), NULL);
-    //g_signal_connect (da, "scroll-event", G_CALLBACK(mouse_scroll), NULL);
-	gtk_widget_set_events(da, GDK_POINTER_MOTION_MASK ); // | GDK_SCROLL_MASK 
+    g_signal_connect (da, "scroll-event", G_CALLBACK(mouse_scroll), NULL);
+	gtk_widget_set_events(da, GDK_POINTER_MOTION_MASK | GDK_SCROLL_MASK );
 
 	gtk_window_set_default_size( GTK_WINDOW( window ), 3000, 700 );
 	gtk_widget_show_all( window );
