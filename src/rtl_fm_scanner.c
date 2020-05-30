@@ -729,7 +729,7 @@ void plot_dbms(int low_freq, int step, int num_steps, double *dbms)
     //g_signal_connect (da, "scroll-event", G_CALLBACK(mouse_scroll), NULL);
 	gtk_widget_set_events(da, GDK_POINTER_MOTION_MASK ); // | GDK_SCROLL_MASK 
 
-	//gtk_window_set_default_size( GTK_WINDOW( window ), 700, 700 );
+	gtk_window_set_default_size( GTK_WINDOW( window ), 3000, 700 );
 	gtk_widget_show_all( window );
 
 	GMainLoop* mainloop = NULL;
@@ -742,13 +742,18 @@ void plot_dbms(int low_freq, int step, int num_steps, double *dbms)
 
 int step = (double)rate / (double)(bin_len);
 double *dbms = NULL; //[16384];
-//int freq = 162500000;
-//int freq = 144000000;
-//int freq_low = 161000000;
-//int freq_high = 163000000;
-//int freq_high = 163000000;
-int freq_low = 94000000;
-int freq_high = 99000000;
+
+//int freq_low = 144000000;
+//int freq_high = 148000000;
+
+//int freq_low = 440000000;
+//int freq_high = 460000000;
+
+int freq_low = 161000000;
+int freq_high = 163000000;
+
+//int freq_low = 100000000;
+//int freq_high = 200000000;
 
 int num_scans = 0;
 
@@ -782,7 +787,7 @@ int main(int argc, char **argv)
 	/* Set the tuner gain */
 	// can't use auto-gain because it changes between scan tunes
 	//verbose_auto_gain(dev);
-	int gain = nearest_gain(dev, 30);
+	int gain = nearest_gain(dev, 100);
 	verbose_gain_set(dev, gain);
 
 	int ppm_error = 0;
