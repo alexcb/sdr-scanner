@@ -2276,8 +2276,11 @@ long real_conj(int16_t real, int16_t imag)
 
 void scanner(int freq)
 {
-	int i, j, j2, f, n_read, offset, bin_e, bin_len, buf_len, ds, ds_p;
+	int i, j, j2, f, n_read, offset, bin_e, bin_len, buf_len, ds, ds_p, bw2;
 	int32_t w;
+	long tmp;
+	double dbm;
+
 	bin_e = 10;
 	bin_len = 1 << bin_e;
 	buf_len = 16384;
@@ -2323,10 +2326,6 @@ void scanner(int freq)
 		}
 		samples += 1;
 	}
-	{
-	int i, bw2;
-	long tmp;
-	double dbm;
 	/* fix FFT stuff quirks */
 	if (bin_e > 0) {
 		/* nuke DC component (not effective for all windows) */
@@ -2370,7 +2369,6 @@ void scanner(int freq)
 		avg[i] = 0L;
 	}
 	samples = 0;
-	}
 	
 }
 
