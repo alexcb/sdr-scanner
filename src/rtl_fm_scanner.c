@@ -2274,7 +2274,7 @@ long real_conj(int16_t real, int16_t imag)
 	return ((long)real*(long)real + (long)imag*(long)imag);
 }
 
-void scanner(int freq)
+void scanner(int freq, long *dbms)
 {
 	int i, j, j2, f, n_read, offset, bin_e, bin_len, buf_len, ds, ds_p, bw2;
 	int32_t w;
@@ -2348,28 +2348,60 @@ void scanner(int freq)
 		dbm /= (double)rate;
 		dbm /= (double)samples;
 		dbm  = 10 * log10(dbm);
+		dbms[i] = dbm;
+	}
 
-		if( dbm > max_dbm ) {
-			max_dbm = dbm;
+	//	if( dbm > max_dbm ) {
+	//		max_dbm = dbm;
+	//		max_freq = cur_freq;
+	//	}
+
+
+	//	if( dbm > -2.0 ) {
+	//		printf("%d ", i);
+	//		printf("%d ", cur_freq);
+	//		printf("%.2f\n", dbm);
+	//	}
+	//	int step = (double)rate / (double)(bin_len);
+	//	cur_freq += step;
+	//}
+	//if( max_freq ) {
+	//	printf("strongest signal at %d\n", max_freq);
+	//}
+	//for (i=0; i<bin_len; i++) {
+	//	avg[i] = 0L;
+	//}
+	//samples = 0;
+	
+}
+
+void print_loudest(int freq, long *dbms)
+{
+	int rate = 1000000;
+	int bw2 = rate / 2;
+	int cur_freq = freq - bw2;
+
+	int bin_e = 10;
+	int bin_len = 1 << bin_e;
+
+	long max_dbm = -9999.0;
+	int max_freq = 0;
+
+	int step = (double)rate / (double)(bin_len);
+
+	for (int i=0; i<bin_len; i++) {
+		if( dbms[i] > max_dbm ) {
+			max_dbm = dbms[i];
 			max_freq = cur_freq;
 		}
-
-		if( dbm > -2.0 ) {
-			printf("%d ", i);
-			printf("%d ", cur_freq);
-			printf("%.2f\n", dbm);
-		}
-		int step = (double)rate / (double)(bin_len);
 		cur_freq += step;
 	}
+
 	if( max_freq ) {
 		printf("strongest signal at %d\n", max_freq);
+	} else {
+		printf("none\n");
 	}
-	for (i=0; i<bin_len; i++) {
-		avg[i] = 0L;
-	}
-	samples = 0;
-	
 }
 
 int main(int argc, char **argv)
@@ -2567,7 +2599,14 @@ int main(int argc, char **argv)
 	for (i=0; i<length; i++) {
 		window_coefs[i] = (int)(256*window_fn(i, length));
 	}
-	scanner(162500000);
+
+	long dbms[16384];
+
+	scanner(162500000, dbms);
+	print_loudest(162500000, dbms);
+
+	scanner(147000000, dbms);
+	print_loudest(147000000, dbms);
 
 	/* clean up */
 
