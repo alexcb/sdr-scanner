@@ -602,22 +602,41 @@ static gboolean mouse_moved(GtkWidget *widget,GdkEvent *event,gpointer user_data
 	}
 }
 
+double view_start = 0.0;
+double view_end = 1.0;
+
 double zoom_dbm = 1.0;
 static gboolean mouse_scroll(GtkWidget *widget,GdkEvent *event,gpointer user_data)
 {
+	int width = gtk_widget_get_allocated_width (da);
+
 	if (event->type==GDK_SCROLL) {
 		GdkEventScroll* e=(GdkEventScroll*)event;
 		gdouble x, y;
 		gdk_event_get_scroll_deltas( e, &x, &y );
+
+		double ratio = (double) e->x / (double) width;
+
+		double view_range = view_end - view_start;
+		double scale = view_range / 10.0;
+
 		if( e->direction == GDK_SCROLL_UP ) {
-			zoom_dbm += 0.1;
+			printf("zoom in %lf\n", ratio);
+			view_start += scale*(ratio);
+			view_end -= scale*(1.0-ratio);
 		}
 		if( e->direction == GDK_SCROLL_DOWN ) {
-			zoom_dbm -= 0.1;
+			printf("zoom out\n");
+			view_start -= scale*(ratio);
+			view_end += scale*(1.0-ratio);
 		}
-		printf("scroll dir: %d\n", e->direction );
-		printf("scroll x: (%lf %lf)\n", e->x, x );
-		printf("scroll y: (%lf %lf)\n", e->y, y );
+		if( view_end > 1.0 )
+			view_end = 1.0;
+		if( view_start < 0.0 )
+			view_start = 0.0;
+		//printf("scroll dir: %d\n", e->direction );
+		//printf("scroll x: (%lf %lf)\n", e->x, x );
+		//printf("scroll y: (%lf %lf)\n", e->y, y );
 		gtk_widget_queue_draw( da );
 	}
 }
@@ -630,6 +649,13 @@ double *sigs;
 
 double clamp_min_dbm = -100.0;
 double clamp_max_dbm = 0.0;
+
+void fmt_freq(char *s, int freq)
+{
+	int mhz = freq / 1000000;
+	int khz = (freq % 1000000) / 1000;
+	sprintf(s, "%d.%03d", mhz, khz);
+}
 
 static gboolean
 checkerboard_draw (GtkWidget *da,
@@ -655,14 +681,21 @@ checkerboard_draw (GtkWidget *da,
 	//	//return TRUE;
 	//}
 
+	double view_range = view_end - view_start;
+
 	printf("points to plot: %d\n", sigs_num_steps);
-	double scale = (double) sigs_num_steps / (double)width;
+	double scale = (double) sigs_num_steps*view_range / (double)width;
 
 	double clamp_range = clamp_max_dbm - clamp_min_dbm;
 
+	int start_i = view_start * sigs_num_steps;
+
+
 	//printf("draw %d %d\n", width, width_per_step);
 	for( i = 0; i < width; i++ ) {
-		int ii = (int)(scale*i);
+		int ii = start_i + (int)(scale*i);
+		if( ii < 0 ) { ii = 0; printf("warning less than 0\n");}
+		if( ii >= sigs_num_steps ) { ii = sigs_num_steps-1; printf("warning too big\n");}
 		double ss = sigs[ii];
 		if( ss < clamp_min_dbm ) { ss = clamp_min_dbm; }
 		if( ss > clamp_max_dbm ) { ss = clamp_max_dbm; }
@@ -700,12 +733,12 @@ checkerboard_draw (GtkWidget *da,
 	//	}
 	//}
 	if( 0 <= hover_freq && hover_freq < width ) {
-		int i = (int)((double)hover_freq * scale);
+		int i = start_i + (int)((double)hover_freq * scale);
 		int freq = sigs_low_freq + i*sigs_step;
 		char s[1024];
-		sprintf(s, "%d", freq);
+		fmt_freq(s, freq);
 
-		cairo_move_to(cr, 50, 150);
+		cairo_move_to(cr, 50, 50);
 		cairo_show_text(cr, s);
 	}
 
@@ -762,17 +795,21 @@ void plot_dbms(int low_freq, int step, int num_steps, double *dbms)
 int step = (double)rate / (double)(bin_len);
 double *dbms = NULL; //[16384];
 
+//int freq_low = 89000000;
+//int freq_high = 107000000;
+
 //int freq_low = 144000000;
 //int freq_high = 148000000;
 
 //int freq_low = 440000000;
 //int freq_high = 460000000;
 
-int freq_low = 161000000;
-int freq_high = 163000000;
+//int freq_low = 161000000;
+//int freq_high = 163000000;
 
-//int freq_low = 100000000;
-//int freq_high = 200000000;
+// vhf range
+int freq_low = 130000000;
+int freq_high = 175000000;
 
 int num_scans = 0;
 
@@ -788,7 +825,7 @@ static void* radioscanner( void* arg )
 		}
 		//print_loudest(freq, step, bin_len, dbms);
 		gtk_widget_queue_draw( da );
-		usleep(10000);	
+		usleep(10000);
 	}
 }
 
