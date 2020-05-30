@@ -1722,7 +1722,6 @@ int verbose_device_search( char* s )
 
 static volatile int do_exit = 0;
 static rtlsdr_dev_t *dev = NULL;
-FILE *file;
 
 int16_t* Sinewave;
 double* power_table;
@@ -2322,63 +2321,56 @@ void scanner(void)
 			fix_fft(fft_buf+offset, bin_e);
 			for (j=0; j<bin_len; j++) {
 				ts->avg[j] += real_conj(fft_buf[offset+j*2], fft_buf[offset+j*2+1]);
-				printf("%d\n", ts->avg[j]);
+				//printf("%d\n", ts->avg[j]);
 			}
 			ts->samples += ds;
 		}
-	}
-}
-
-void csv_dbm(struct tuning_state *ts)
-{
-	int i, len, ds, i1, i2, bw2, bin_count;
-	long tmp;
-	double dbm;
-	len = 1 << ts->bin_e;
-	ds = ts->downsample;
-	/* fix FFT stuff quirks */
-	if (ts->bin_e > 0) {
-		/* nuke DC component (not effective for all windows) */
-		ts->avg[0] = ts->avg[1];
-		/* FFT is translated by 180 degrees */
-		for (i=0; i<len/2; i++) {
-			tmp = ts->avg[i];
-			ts->avg[i] = ts->avg[i+len/2];
-			ts->avg[i+len/2] = tmp;
+		int i, len, ds, i1, i2, bw2, bin_count;
+		long tmp;
+		double dbm;
+		len = 1 << ts->bin_e;
+		ds = ts->downsample;
+		/* fix FFT stuff quirks */
+		if (ts->bin_e > 0) {
+			/* nuke DC component (not effective for all windows) */
+			ts->avg[0] = ts->avg[1];
+			/* FFT is translated by 180 degrees */
+			for (i=0; i<len/2; i++) {
+				tmp = ts->avg[i];
+				ts->avg[i] = ts->avg[i+len/2];
+				ts->avg[i+len/2] = tmp;
+			}
 		}
-	}
-	/* Hz low, Hz high, Hz step, samples, dbm, dbm, ... */
-	bin_count = (int)((double)len * (1.0 - ts->crop));
-	bw2 = (int)(((double)ts->rate * (double)bin_count) / (len * 2 * ds));
-	//fprintf(file, "%i, %i, %.2f, %i, ", ts->freq - bw2, ts->freq + bw2,
-	//	(double)ts->rate / (double)(len*ds), ts->samples);
-	// something seems off with the dbm math
-	i1 = 0 + (int)((double)len * ts->crop * 0.5);
-	i2 = (len-1) - (int)((double)len * ts->crop * 0.5);
-	int freq = ts->freq - bw2;
-	for (i=i1; i<=i2; i++) {
-		dbm  = (double)ts->avg[i];
-		dbm /= (double)ts->rate;
-		dbm /= (double)ts->samples;
-		dbm  = 10 * log10(dbm);
-		//fprintf(file, "%.2f, ", dbm);
+		/* Hz low, Hz high, Hz step, samples, dbm, dbm, ... */
+		bin_count = (int)((double)len * (1.0 - ts->crop));
+		bw2 = (int)(((double)ts->rate * (double)bin_count) / (len * 2 * ds));
+		//	(double)ts->rate / (double)(len*ds), ts->samples);
+		// something seems off with the dbm math
+		i1 = 0 + (int)((double)len * ts->crop * 0.5);
+		i2 = (len-1) - (int)((double)len * ts->crop * 0.5);
+		int freq = ts->freq - bw2;
+		for (i=i1; i<=i2; i++) {
+			dbm  = (double)ts->avg[i];
+			dbm /= (double)ts->rate;
+			dbm /= (double)ts->samples;
+			dbm  = 10 * log10(dbm);
 
-		printf("%d ", i);
-		printf("%d ", freq);
-		printf("%.2f\n", dbm);
-		int step = (double)ts->rate / (double)(len*ds);
-		freq += step;
+			printf("%d ", i);
+			printf("%d ", freq);
+			printf("%.2f\n", dbm);
+			int step = (double)ts->rate / (double)(len*ds);
+			freq += step;
+		}
+		dbm = (double)ts->avg[i2] / ((double)ts->rate * (double)ts->samples);
+		if (ts->bin_e == 0) {
+			dbm = ((double)ts->avg[0] / \
+			((double)ts->rate * (double)ts->samples));}
+		dbm  = 10 * log10(dbm);
+		for (i=0; i<len; i++) {
+			ts->avg[i] = 0L;
+		}
+		ts->samples = 0;
 	}
-	dbm = (double)ts->avg[i2] / ((double)ts->rate * (double)ts->samples);
-	if (ts->bin_e == 0) {
-		dbm = ((double)ts->avg[0] / \
-		((double)ts->rate * (double)ts->samples));}
-	dbm  = 10 * log10(dbm);
-	fprintf(file, "%.2f\n", dbm);
-	for (i=0; i<len; i++) {
-		ts->avg[i] = 0L;
-	}
-	ts->samples = 0;
 }
 
 int main(int argc, char **argv)
@@ -2561,20 +2553,6 @@ int main(int argc, char **argv)
 	if (enable_biastee)
 		fprintf(stderr, "activated bias-T on GPIO PIN 0\n");
 
-	if (strcmp(filename, "-") == 0) { /* Write log to stdout */
-		file = stdout;
-#ifdef _WIN32
-		// Is this necessary?  Output is ascii.
-		_setmode(_fileno(file), _O_BINARY);
-#endif
-	} else {
-		file = fopen(filename, "wb");
-		if (!file) {
-			fprintf(stderr, "Failed to open %s\n", filename);
-			exit(1);
-		}
-	}
-
 	/* Reset endpoint before we start reading from it (mandatory) */
 	verbose_reset_buffer(dev);
 
@@ -2590,28 +2568,7 @@ int main(int argc, char **argv)
 	for (i=0; i<length; i++) {
 		window_coefs[i] = (int)(256*window_fn(i, length));
 	}
-	while (!do_exit) {
-		scanner();
-		//do_exit = 1;
-		//time_now = time(NULL);
-		//if (time_now < next_tick) {
-		//	continue;}
-		//// time, Hz low, Hz high, Hz step, samples, dbm, dbm, ...
-		//cal_time = localtime(&time_now);
-		//strftime(t_str, 50, "%Y-%m-%d, %H:%M:%S", cal_time);
-		for (i=0; i<tune_count; i++) {
-			//fprintf(file, "%s, ", t_str);
-			csv_dbm(&tunes[i]);
-		}
-		fflush(file);
-		do_exit = 1;
-		//while (time(NULL) >= next_tick) {
-		//	next_tick += interval;}
-		//if (single) {
-		//	do_exit = 1;}
-		//if (exit_time && time(NULL) >= exit_time) {
-		//	do_exit = 1;}
-	}
+	scanner();
 
 	/* clean up */
 
@@ -2619,9 +2576,6 @@ int main(int argc, char **argv)
 		fprintf(stderr, "\nUser cancel, exiting...\n");}
 	else {
 		fprintf(stderr, "\nLibrary error %d, exiting...\n", r);}
-
-	if (file != stdout) {
-		fclose(file);}
 
 	rtlsdr_close(dev);
 	free(fft_buf);
