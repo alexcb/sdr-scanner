@@ -2278,104 +2278,100 @@ void scanner(int freq)
 {
 	int i, j, j2, f, n_read, offset, bin_e, bin_len, buf_len, ds, ds_p;
 	int32_t w;
-	struct tuning_state *ts;
-	bin_e = tunes[0].bin_e;
+	bin_e = 10;
 	bin_len = 1 << bin_e;
-	buf_len = tunes[0].buf_len;
-	for (i=0; i<tune_count; i++) {
-		ts = &tunes[i];
-		retune(dev, freq);
-		rtlsdr_read_sync(dev, ts->buf8, buf_len, &n_read);
-		if (n_read != buf_len) {
-			fprintf(stderr, "Error: dropped samples.\n");}
-		/* rms */
-		if (bin_len == 1) {
-			rms_power(ts);
-			continue;
-		}
-		/* prep for fft */
-		for (j=0; j<buf_len; j++) {
-			fft_buf[j] = (int16_t)ts->buf8[j] - 127;
-		}
-		ds = ts->downsample;
-		ds_p = ts->downsample_passes;
-		remove_dc(fft_buf, buf_len / ds);
-		remove_dc(fft_buf+1, (buf_len / ds) - 1);
-		/* window function and fft */
-		for (offset=0; offset<(buf_len/ds); offset+=(2*bin_len)) {
-			// todo, let rect skip this
-			for (j=0; j<bin_len; j++) {
-				w =  (int32_t)fft_buf[offset+j*2];
-				w *= (int32_t)(window_coefs[j]);
-				//w /= (int32_t)(ds);
-				fft_buf[offset+j*2]   = (int16_t)w;
-				w =  (int32_t)fft_buf[offset+j*2+1];
-				w *= (int32_t)(window_coefs[j]);
-				//w /= (int32_t)(ds);
-				fft_buf[offset+j*2+1] = (int16_t)w;
-			}
-			fix_fft(fft_buf+offset, bin_e);
-			for (j=0; j<bin_len; j++) {
-				ts->avg[j] += real_conj(fft_buf[offset+j*2], fft_buf[offset+j*2+1]);
-				//printf("%d\n", ts->avg[j]);
-			}
-			ts->samples += ds;
-		}
-		int i, len, ds, i1, i2, bw2, bin_count;
-		long tmp;
-		double dbm;
-		len = 1 << ts->bin_e;
-		ds = ts->downsample;
-		/* fix FFT stuff quirks */
-		if (ts->bin_e > 0) {
-			/* nuke DC component (not effective for all windows) */
-			ts->avg[0] = ts->avg[1];
-			/* FFT is translated by 180 degrees */
-			for (i=0; i<len/2; i++) {
-				tmp = ts->avg[i];
-				ts->avg[i] = ts->avg[i+len/2];
-				ts->avg[i+len/2] = tmp;
-			}
-		}
-		/* Hz low, Hz high, Hz step, samples, dbm, dbm, ... */
-		bin_count = (int)((double)len * (1.0 - ts->crop));
-		bw2 = (int)(((double)ts->rate * (double)bin_count) / (len * 2 * ds));
-		//	(double)ts->rate / (double)(len*ds), ts->samples);
-		// something seems off with the dbm math
-		i1 = 0 + (int)((double)len * ts->crop * 0.5);
-		i2 = (len-1) - (int)((double)len * ts->crop * 0.5);
-		int freq = ts->freq - bw2;
+	buf_len = 16384;
+	retune(dev, freq);
 
-		long max_dbm = -9999.0;
-		int max_freq = 0;
+	uint8_t buf8[16384];
+	long avg[16384];
+	memset(avg, 0, 16384*sizeof(long));
+	int samples;
 
-		for (i=i1; i<=i2; i++) {
-			dbm  = (double)ts->avg[i];
-			dbm /= (double)ts->rate;
-			dbm /= (double)ts->samples;
-			dbm  = 10 * log10(dbm);
+	int rate = 1000000;
 
-			if( dbm > max_dbm ) {
-				max_dbm = dbm;
-				max_freq = freq;
-			}
-
-			if( dbm > -2.0 ) {
-				printf("%d ", i);
-				printf("%d ", freq);
-				printf("%.2f\n", dbm);
-			}
-			int step = (double)ts->rate / (double)(len*ds);
-			freq += step;
-		}
-		if( max_freq ) {
-			printf("strongest signal at %d\n", max_freq);
-		}
-		for (i=0; i<len; i++) {
-			ts->avg[i] = 0L;
-		}
-		ts->samples = 0;
+	rtlsdr_read_sync(dev, buf8, buf_len, &n_read);
+	if (n_read != buf_len) {
+		fprintf(stderr, "Error: dropped samples.\n");}
+	/* rms */
+	//if (bin_len == 1) {
+	//	rms_power(ts);
+	//	continue;
+	//}
+	/* prep for fft */
+	for (j=0; j<buf_len; j++) {
+		fft_buf[j] = (int16_t)buf8[j] - 127;
 	}
+	remove_dc(fft_buf, buf_len);
+	remove_dc(fft_buf+1, (buf_len) - 1);
+	/* window function and fft */
+	for (offset=0; offset<(buf_len); offset+=(2*bin_len)) {
+		// todo, let rect skip this
+		for (j=0; j<bin_len; j++) {
+			w =  (int32_t)fft_buf[offset+j*2];
+			w *= 256; //(int32_t)(window_coefs[j]);
+			//w /= (int32_t)(ds);
+			fft_buf[offset+j*2]   = (int16_t)w;
+			w =  (int32_t)fft_buf[offset+j*2+1];
+			w *= 256; //(int32_t)(window_coefs[j]);
+			//w /= (int32_t)(ds);
+			fft_buf[offset+j*2+1] = (int16_t)w;
+		}
+		fix_fft(fft_buf+offset, bin_e);
+		for (j=0; j<bin_len; j++) {
+			avg[j] += real_conj(fft_buf[offset+j*2], fft_buf[offset+j*2+1]);
+		}
+		samples += 1;
+	}
+	{
+	int i, bw2;
+	long tmp;
+	double dbm;
+	/* fix FFT stuff quirks */
+	if (bin_e > 0) {
+		/* nuke DC component (not effective for all windows) */
+		avg[0] = avg[1];
+		/* FFT is translated by 180 degrees */
+		for (i=0; i<bin_len/2; i++) {
+			tmp = avg[i];
+			avg[i] = avg[i+bin_len/2];
+			avg[i+bin_len/2] = tmp;
+		}
+	}
+	bw2 = rate / 2;
+	int cur_freq = freq - bw2;
+
+	long max_dbm = -9999.0;
+	int max_freq = 0;
+
+	for (i=0; i<bin_len; i++) {
+		dbm  = (double)avg[i];
+		dbm /= (double)rate;
+		dbm /= (double)samples;
+		dbm  = 10 * log10(dbm);
+
+		if( dbm > max_dbm ) {
+			max_dbm = dbm;
+			max_freq = cur_freq;
+		}
+
+		if( dbm > -2.0 ) {
+			printf("%d ", i);
+			printf("%d ", cur_freq);
+			printf("%.2f\n", dbm);
+		}
+		int step = (double)rate / (double)(bin_len);
+		cur_freq += step;
+	}
+	if( max_freq ) {
+		printf("strongest signal at %d\n", max_freq);
+	}
+	for (i=0; i<bin_len; i++) {
+		avg[i] = 0L;
+	}
+	samples = 0;
+	}
+	
 }
 
 int main(int argc, char **argv)
