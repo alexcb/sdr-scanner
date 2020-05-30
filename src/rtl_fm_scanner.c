@@ -676,7 +676,7 @@ checkerboard_draw (GtkWidget *da,
 
 		cairo_set_source_rgb( cr, 0, 0, 0 );
 
-		cairo_rectangle( cr, i, y, 1, 1);
+		cairo_rectangle( cr, i, y, 3, 3);
 		cairo_fill (cr);
 	}
 	//cairo_select_font_face( cr, "Purisa",
