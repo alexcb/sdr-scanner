@@ -585,13 +585,138 @@ void print_loudest(int low_freq, int step, int num_steps, double *dbms)
 	}
 }
 
+#include <gdk/gdk.h>
+#include <gtk/gtk.h>
+
+GtkWidget *da = NULL;
+
+int hover_freq = -1;
+
+static gboolean mouse_moved(GtkWidget *widget,GdkEvent *event,gpointer user_data)
+{
+	if (event->type==GDK_MOTION_NOTIFY) {
+		GdkEventMotion* e=(GdkEventMotion*)event;
+		printf("Coordinates: (%u,%u)\n", (guint)e->x,(guint)e->y);
+		hover_freq = e->x;
+		gtk_widget_queue_draw( da );
+	}
+}
+
+
+int sigs_low_freq;
+int sigs_num_steps;
+int sigs_step;
+double *sigs;
+
+static gboolean
+checkerboard_draw (GtkWidget *da,
+                   cairo_t   *cr,
+                   gpointer   data)
+{
+	gint i, j, xcount, width, height;
+
+#define CHECK_SIZE 10
+#define SPACING 2
+
+	unsigned char buf[32*1024];
+	//get_radio_raw_buf( &rs, buf );
+	//get_radio_rot_buf( &rs, buf );
+
+	//xcount = 0;
+	width = gtk_widget_get_allocated_width (da);
+	height = gtk_widget_get_allocated_height (da);
+	//i = SPACING;
+	int width_per_step = width / sigs_num_steps;
+	if( width_per_step <= 0 ) {
+		printf("too small\n");
+		return TRUE;
+	}
+	printf("draw %d %d\n", width, width_per_step);
+	for( i = 0; i < sigs_num_steps; i++ ) {
+		double ss = sigs[i];
+
+		cairo_set_source_rgb( cr, 0, 0, 0 );
+
+		int y = 200 - ss;
+		cairo_rectangle( cr, i*width_per_step, y, width_per_step, 1);
+		cairo_fill (cr);
+	}
+
+	cairo_select_font_face( cr, "Purisa",
+			CAIRO_FONT_SLANT_NORMAL,
+			CAIRO_FONT_WEIGHT_BOLD);
+
+	cairo_set_font_size(cr, 13);
+
+	int tick_width = 100;
+	int num_ticks = width / tick_width;
+	if( num_ticks >= 2 ) {
+		for(int i = 0; i < num_ticks; i++ ) {
+			int x = i * tick_width;
+			char s[1024];
+			int freq = sigs_low_freq + (x/width_per_step)*sigs_step;
+			sprintf(s, "%d", freq);
+
+			cairo_move_to(cr, x, 100);
+			cairo_show_text(cr, s);
+		}
+	}
+
+	if( 0 <= hover_freq && hover_freq < width ) {
+		int freq = sigs_low_freq + (hover_freq/width_per_step)*sigs_step;
+		char s[1024];
+		sprintf(s, "%d", freq);
+
+		cairo_move_to(cr, 50, 150);
+		cairo_show_text(cr, s);
+	}
+
+	/* return TRUE because we've handled this event, so no
+	 * further processing is required.
+	 */
+	return TRUE;
+}
+
 void plot_dbms(int low_freq, int step, int num_steps, double *dbms)
 {
-	int cur_freq = low_freq;
-	for (int i=0; i<num_steps; i++) {
-		printf("%d %lf\n", cur_freq, dbms[i]);
-		cur_freq += step;
-	}
+	sigs_low_freq = low_freq;
+	sigs_num_steps = num_steps;
+	sigs_step = step;
+	sigs = dbms;
+	//int cur_freq = low_freq;
+	//for (int i=0; i<num_steps; i++) {
+	//	printf("%d %lf\n", cur_freq, dbms[i]);
+	//	cur_freq += step;
+	//}
+	GtkWidget *window = gtk_window_new( GTK_WINDOW_TOPLEVEL );
+
+	GtkWidget* vbox = gtk_box_new( GTK_ORIENTATION_VERTICAL, 8 );
+	gtk_container_add( GTK_CONTAINER( window ), vbox );
+
+
+	// drawing area for waterfall
+	GtkWidget* frame = gtk_frame_new (NULL);
+	gtk_frame_set_shadow_type (GTK_FRAME (frame), GTK_SHADOW_IN);
+	gtk_box_pack_start (GTK_BOX (vbox), frame, TRUE, TRUE, 0);
+
+	da = gtk_drawing_area_new ();
+	/* set a minimum size */
+	gtk_widget_set_size_request (da, 100, 100);
+
+	gtk_container_add (GTK_CONTAINER (frame), da);
+
+	g_signal_connect (da, "draw", G_CALLBACK(checkerboard_draw), NULL);
+    g_signal_connect (da, "motion-notify-event", G_CALLBACK(mouse_moved), NULL);
+	gtk_widget_set_events(da, GDK_POINTER_MOTION_MASK);
+
+	//gtk_window_set_default_size( GTK_WINDOW( window ), 700, 700 );
+	gtk_widget_show_all( window );
+
+	GMainLoop* mainloop = NULL;
+	mainloop = g_main_loop_new( NULL, FALSE );
+	g_main_loop_run( mainloop );
+
+	return 0;
 }
 
 int main(int argc, char **argv)
@@ -633,11 +758,13 @@ int main(int argc, char **argv)
 	int freq = 162500000;
 	scanner(freq, dbms);
 	print_loudest(freq, step, bin_len, dbms);
-	plot_dbms(freq, step, bin_len, dbms);
 
-	freq = 147000000;
-	scanner(freq, dbms);
-	print_loudest(freq, step, bin_len, dbms);
+	//freq = 147000000;
+	//scanner(freq, dbms);
+	//print_loudest(freq, step, bin_len, dbms);
+
+	gtk_init( &argc, &argv );
+	plot_dbms(freq, step, bin_len, dbms);
 
 
 	rtlsdr_close(dev);
