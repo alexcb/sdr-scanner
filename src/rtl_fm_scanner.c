@@ -1727,8 +1727,6 @@ int16_t* Sinewave;
 double* power_table;
 int N_WAVE, LOG2_N_WAVE;
 int next_power;
-int16_t *fft_buf;
-int *window_coefs;
 
 struct tuning_state
 /* one per tuning range */
@@ -1751,98 +1749,9 @@ struct tuning_state
 	//pthread_mutex_t buf_mutex;
 };
 
-/* 3000 is enough for 3GHz b/w worst case */
-#define MAX_TUNES	3000
-struct tuning_state tunes[MAX_TUNES];
-int tune_count = 0;
-
 int boxcar = 1;
 int comp_fir_size = 0;
 int peak_hold = 0;
-
-void usage(void)
-{
-	fprintf(stderr,
-		"rtl_power, a simple FFT logger for RTL2832 based DVB-T receivers\n\n"
-		"Use:\trtl_power -f freq_range [-options] [filename]\n"
-		"\t-f lower:upper:bin_size [Hz]\n"
-		"\t (bin size is a maximum, smaller more convenient bins\n"
-		"\t  will be used.  valid range 1Hz - 2.8MHz)\n"
-		"\t[-i integration_interval (default: 10 seconds)]\n"
-		"\t (buggy if a full sweep takes longer than the interval)\n"
-		"\t[-1 enables single-shot mode (default: off)]\n"
-		"\t[-e exit_timer (default: off/0)]\n"
-		//"\t[-s avg/iir smoothing (default: avg)]\n"
-		//"\t[-t threads (default: 1)]\n"
-		"\t[-d device_index (default: 0)]\n"
-		"\t[-g tuner_gain (default: automatic)]\n"
-		"\t[-p ppm_error (default: 0)]\n"
-		"\t[-T enable bias-T on GPIO PIN 0 (works for rtl-sdr.com v3 dongles)]\n"
-		"\tfilename (a '-' dumps samples to stdout)\n"
-		"\t (omitting the filename also uses stdout)\n"
-		"\n"
-		"Experimental options:\n"
-		"\t[-w window (default: rectangle)]\n"
-		"\t (hamming, blackman, blackman-harris, hann-poisson, bartlett, youssef)\n"
-		// kaiser
-		"\t[-c crop_percent (default: 0%%, recommended: 20%%-50%%)]\n"
-		"\t (discards data at the edges, 100%% discards everything)\n"
-		"\t (has no effect for bins larger than 1MHz)\n"
-		"\t[-F fir_size (default: disabled)]\n"
-		"\t (enables low-leakage downsample filter,\n"
-		"\t  fir_size can be 0 or 9.  0 has bad roll off,\n"
-		"\t  try with '-c 50%%')\n"
-		"\t[-P enables peak hold (default: off)]\n"
-		"\t[-D enable direct sampling (default: off)]\n"
-		"\t[-O enable offset tuning (default: off)]\n"
-		"\n"
-		"CSV FFT output columns:\n"
-		"\tdate, time, Hz low, Hz high, Hz step, samples, dbm, dbm, ...\n\n"
-		"Examples:\n"
-		"\trtl_power -f 88M:108M:125k fm_stations.csv\n"
-		"\t (creates 160 bins across the FM band,\n"
-		"\t  individual stations should be visible)\n"
-		"\trtl_power -f 100M:1G:1M -i 5m -1 survey.csv\n"
-		"\t (a five minute low res scan of nearly everything)\n"
-		"\trtl_power -f ... -i 15m -1 log.csv\n"
-		"\t (integrate for 15 minutes and exit afterwards)\n"
-		"\trtl_power -f ... -e 1h | gzip > log.csv.gz\n"
-		"\t (collect data for one hour and compress it on the fly)\n\n"
-		"Convert CSV to a waterfall graphic with:\n"
-		"\t http://kmkeen.com/tmp/heatmap.py.txt \n");
-	exit(1);
-}
-
-void multi_bail(void)
-{
-	if (do_exit == 1)
-	{
-		fprintf(stderr, "Signal caught, finishing scan pass.\n");
-	}
-	if (do_exit >= 2)
-	{
-		fprintf(stderr, "Signal caught, aborting immediately.\n");
-	}
-}
-
-#ifdef _WIN32
-BOOL WINAPI
-sighandler(int signum)
-{
-	if (CTRL_C_EVENT == signum) {
-		do_exit++;
-		multi_bail();
-		return TRUE;
-	}
-	return FALSE;
-}
-#else
-static void sighandler(int signum)
-{
-	do_exit++;
-	multi_bail();
-}
-#endif
 
 /* more cond dumbness */
 #define safe_cond_signal(n, m) pthread_mutex_lock(m); pthread_cond_signal(n); pthread_mutex_unlock(m)
@@ -1864,13 +1773,6 @@ int cic_9_tables[][10] = {
 	{9, -119, -577, 5917, -26067, 77473, -26067, 5917, -577, -119},
 	{9, -199, -362, 5303, -25505, 77489, -25505, 5303, -362, -199},
 };
-
-#if defined(_MSC_VER) && (_MSC_VER < 1800)
-double log2(double n)
-{
-	return log(n) / log(2.0);
-}
-#endif
 
 /* FFT based on fix_fft.c by Roberts, Slaney and Bouras
    http://www.jjj.de/fft/fftpage.html
@@ -1960,219 +1862,6 @@ int fix_fft(int16_t iq[], int m)
 	return 0;
 }
 
-double rectangle(int i, int length)
-{
-	return 1.0;
-}
-
-double hamming(int i, int length)
-{
-	double a, b, w, N1;
-	a = 25.0/46.0;
-	b = 21.0/46.0;
-	N1 = (double)(length-1);
-	w = a - b*cos(2*i*M_PI/N1);
-	return w;
-}
-
-double blackman(int i, int length)
-{
-	double a0, a1, a2, w, N1;
-	a0 = 7938.0/18608.0;
-	a1 = 9240.0/18608.0;
-	a2 = 1430.0/18608.0;
-	N1 = (double)(length-1);
-	w = a0 - a1*cos(2*i*M_PI/N1) + a2*cos(4*i*M_PI/N1);
-	return w;
-}
-
-double blackman_harris(int i, int length)
-{
-	double a0, a1, a2, a3, w, N1;
-	a0 = 0.35875;
-	a1 = 0.48829;
-	a2 = 0.14128;
-	a3 = 0.01168;
-	N1 = (double)(length-1);
-	w = a0 - a1*cos(2*i*M_PI/N1) + a2*cos(4*i*M_PI/N1) - a3*cos(6*i*M_PI/N1);
-	return w;
-}
-
-double hann_poisson(int i, int length)
-{
-	double a, N1, w;
-	a = 2.0;
-	N1 = (double)(length-1);
-	w = 0.5 * (1 - cos(2*M_PI*i/N1)) * \
-	    pow(M_E, (-a*(double)abs((int)(N1-1-2*i)))/N1);
-	return w;
-}
-
-double youssef(int i, int length)
-/* really a blackman-harris-poisson window, but that is a mouthful */
-{
-	double a, a0, a1, a2, a3, w, N1;
-	a0 = 0.35875;
-	a1 = 0.48829;
-	a2 = 0.14128;
-	a3 = 0.01168;
-	N1 = (double)(length-1);
-	w = a0 - a1*cos(2*i*M_PI/N1) + a2*cos(4*i*M_PI/N1) - a3*cos(6*i*M_PI/N1);
-	a = 0.0025;
-	w *= pow(M_E, (-a*(double)abs((int)(N1-1-2*i)))/N1);
-	return w;
-}
-
-double kaiser(int i, int length)
-// todo, become more smart
-{
-	return 1.0;
-}
-
-double bartlett(int i, int length)
-{
-	double N1, L, w;
-	L = (double)length;
-	N1 = L - 1;
-	w = (i - N1/2) / (L/2);
-	if (w < 0) {
-		w = -w;}
-	w = 1 - w;
-	return w;
-}
-
-void rms_power(struct tuning_state *ts)
-/* for bins between 1MHz and 2MHz */
-{
-	int i, s;
-	uint8_t *buf = ts->buf8;
-	int buf_len = ts->buf_len;
-	long p, t;
-	double dc, err;
-
-	p = t = 0L;
-	for (i=0; i<buf_len; i++) {
-		s = (int)buf[i] - 127;
-		t += (long)s;
-		p += (long)(s * s);
-	}
-	/* correct for dc offset in squares */
-	dc = (double)t / (double)buf_len;
-	err = t * 2 * dc - dc * dc * buf_len;
-	p -= (long)round(err);
-
-	if (!peak_hold) {
-		ts->avg[0] += p;
-	} else {
-		ts->avg[0] = MAX(ts->avg[0], p);
-	}
-	ts->samples += 1;
-}
-
-void frequency_range(char *arg, double crop)
-/* flesh out the tunes[] for scanning */
-// do we want the fewest ranges (easy) or the fewest bins (harder)?
-{
-	char *start, *stop, *step;
-	int i, j, upper, lower, max_size, bw_seen, bw_used, bin_e, buf_len;
-	int downsample, downsample_passes;
-	double bin_size;
-	struct tuning_state *ts;
-	/* hacky string parsing */
-	start = arg;
-	stop = strchr(start, ':') + 1;
-	stop[-1] = '\0';
-	step = strchr(stop, ':') + 1;
-	step[-1] = '\0';
-	lower = (int)atofs(start);
-	upper = (int)atofs(stop);
-	max_size = (int)atofs(step);
-	stop[-1] = ':';
-	step[-1] = ':';
-	downsample = 1;
-	downsample_passes = 0;
-	/* evenly sized ranges, as close to MAXIMUM_RATE as possible */
-	// todo, replace loop with algebra
-	for (i=1; i<1500; i++) {
-		bw_seen = (upper - lower) / i;
-		bw_used = (int)((double)(bw_seen) / (1.0 - crop));
-		if (bw_used > MAXIMUM_RATE) {
-			continue;}
-		tune_count = i;
-		break;
-	}
-	/* unless small bandwidth */
-	if (bw_used < MINIMUM_RATE) {
-		tune_count = 1;
-		downsample = MAXIMUM_RATE / bw_used;
-		bw_used = bw_used * downsample;
-	}
-	if (!boxcar && downsample > 1) {
-		downsample_passes = (int)log2(downsample);
-		downsample = 1 << downsample_passes;
-		bw_used = (int)((double)(bw_seen * downsample) / (1.0 - crop));
-	}
-	/* number of bins is power-of-two, bin size is under limit */
-	// todo, replace loop with log2
-	for (i=1; i<=21; i++) {
-		bin_e = i;
-		bin_size = (double)bw_used / (double)((1<<i) * downsample);
-		if (bin_size <= (double)max_size) {
-			break;}
-	}
-	/* unless giant bins */
-	if (max_size >= MINIMUM_RATE) {
-		bw_seen = max_size;
-		bw_used = max_size;
-		tune_count = (upper - lower) / bw_seen;
-		bin_e = 0;
-		crop = 0;
-	}
-	if (tune_count > MAX_TUNES) {
-		fprintf(stderr, "Error: bandwidth too wide.\n");
-		exit(1);
-	}
-	buf_len = 2 * (1<<bin_e) * downsample;
-	if (buf_len < DEFAULT_BUF_LENGTH) {
-		buf_len = DEFAULT_BUF_LENGTH;
-	}
-	/* build the array */
-	for (i=0; i<tune_count; i++) {
-		ts = &tunes[i];
-		ts->freq = lower + i*bw_seen + bw_seen/2;
-		ts->rate = bw_used;
-		ts->bin_e = bin_e;
-		ts->samples = 0;
-		ts->crop = crop;
-		ts->downsample = downsample;
-		ts->downsample_passes = downsample_passes;
-		ts->avg = (long*)malloc((1<<bin_e) * sizeof(long));
-		if (!ts->avg) {
-			fprintf(stderr, "Error: malloc.\n");
-			exit(1);
-		}
-		for (j=0; j<(1<<bin_e); j++) {
-			ts->avg[j] = 0L;
-		}
-		ts->buf8 = (uint8_t*)malloc(buf_len * sizeof(uint8_t));
-		if (!ts->buf8) {
-			fprintf(stderr, "Error: malloc.\n");
-			exit(1);
-		}
-		ts->buf_len = buf_len;
-	}
-	/* report */
-	fprintf(stderr, "Number of frequency hops: %i\n", tune_count);
-	fprintf(stderr, "Dongle bandwidth: %iHz\n", bw_used);
-	fprintf(stderr, "Downsampling by: %ix\n", downsample);
-	fprintf(stderr, "Cropping by: %0.2f%%\n", crop*100);
-	fprintf(stderr, "Total FFT bins: %i\n", tune_count * (1<<bin_e));
-	fprintf(stderr, "Logged FFT bins: %i\n", \
-	  (int)((double)(tune_count * (1<<bin_e)) * (1.0-crop)));
-	fprintf(stderr, "FFT bin size: %0.2fHz\n", bin_size);
-	fprintf(stderr, "Buffer size: %i bytes (%0.2fms)\n", buf_len, 1000 * 0.5 * (float)buf_len / (float)bw_used);
-}
-
 void retune(rtlsdr_dev_t *d, int freq)
 {
 	uint8_t dump[BUFFER_DUMP];
@@ -2184,33 +1873,6 @@ void retune(rtlsdr_dev_t *d, int freq)
 	rtlsdr_read_sync(d, &dump, BUFFER_DUMP, &n_read);
 	if (n_read != BUFFER_DUMP) {
 		fprintf(stderr, "Error: bad retune.\n");}
-}
-
-void fifth_order(int16_t *data, int length)
-/* for half of interleaved data */
-{
-	int i;
-	int a, b, c, d, e, f;
-	a = data[0];
-	b = data[2];
-	c = data[4];
-	d = data[6];
-	e = data[8];
-	f = data[10];
-	/* a downsample should improve resolution, so don't fully shift */
-	/* ease in instead of being stateful */
-	data[0] = ((a+b)*10 + (c+d)*5 + d + f) >> 4;
-	data[2] = ((b+c)*10 + (a+d)*5 + e + f) >> 4;
-	data[4] = (a + (b+e)*5 + (c+d)*10 + f) >> 4;
-	for (i=12; i<length; i+=4) {
-		a = c;
-		b = d;
-		c = e;
-		d = f;
-		e = data[i-2];
-		f = data[i];
-		data[i/2] = (a + (b+e)*5 + (c+d)*10 + f) >> 4;
-	}
 }
 
 void remove_dc(int16_t *data, int length)
@@ -2228,44 +1890,6 @@ void remove_dc(int16_t *data, int length)
 	for (i=0; i < length; i+=2) {
 		data[i] -= ave;
 	}
-}
-
-void generic_fir(int16_t *data, int length, int *fir)
-/* Okay, not at all generic.  Assumes length 9, fix that eventually. */
-{
-	int d, temp, sum;
-	int hist[9] = {0,};
-	/* cheat on the beginning, let it go unfiltered */
-	for (d=0; d<18; d+=2) {
-		hist[d/2] = data[d];
-	}
-	for (d=18; d<length; d+=2) {
-		temp = data[d];
-		sum = 0;
-		sum += (hist[0] + hist[8]) * fir[1];
-		sum += (hist[1] + hist[7]) * fir[2];
-		sum += (hist[2] + hist[6]) * fir[3];
-		sum += (hist[3] + hist[5]) * fir[4];
-		sum +=            hist[4]  * fir[5];
-		data[d] = (int16_t)(sum >> 15) ;
-		hist[0] = hist[1];
-		hist[1] = hist[2];
-		hist[2] = hist[3];
-		hist[3] = hist[4];
-		hist[4] = hist[5];
-		hist[5] = hist[6];
-		hist[6] = hist[7];
-		hist[7] = hist[8];
-		hist[8] = temp;
-	}
-}
-
-void downsample_iq(int16_t *data, int length)
-{
-	fifth_order(data, length);
-	//remove_dc(data, length);
-	fifth_order(data+1, length-1);
-	//remove_dc(data+1, length-1);
 }
 
 long real_conj(int16_t real, int16_t imag)
@@ -2293,14 +1917,12 @@ void scanner(int freq, long *dbms)
 
 	int rate = 1000000;
 
+	int16_t fft_buf[16384];
+
 	rtlsdr_read_sync(dev, buf8, buf_len, &n_read);
 	if (n_read != buf_len) {
 		fprintf(stderr, "Error: dropped samples.\n");}
-	/* rms */
-	//if (bin_len == 1) {
-	//	rms_power(ts);
-	//	continue;
-	//}
+
 	/* prep for fft */
 	for (j=0; j<buf_len; j++) {
 		fft_buf[j] = (int16_t)buf8[j] - 127;
@@ -2337,11 +1959,6 @@ void scanner(int freq, long *dbms)
 			avg[i+bin_len/2] = tmp;
 		}
 	}
-	bw2 = rate / 2;
-	int cur_freq = freq - bw2;
-
-	long max_dbm = -9999.0;
-	int max_freq = 0;
 
 	for (i=0; i<bin_len; i++) {
 		dbm  = (double)avg[i];
@@ -2350,29 +1967,6 @@ void scanner(int freq, long *dbms)
 		dbm  = 10 * log10(dbm);
 		dbms[i] = dbm;
 	}
-
-	//	if( dbm > max_dbm ) {
-	//		max_dbm = dbm;
-	//		max_freq = cur_freq;
-	//	}
-
-
-	//	if( dbm > -2.0 ) {
-	//		printf("%d ", i);
-	//		printf("%d ", cur_freq);
-	//		printf("%.2f\n", dbm);
-	//	}
-	//	int step = (double)rate / (double)(bin_len);
-	//	cur_freq += step;
-	//}
-	//if( max_freq ) {
-	//	printf("strongest signal at %d\n", max_freq);
-	//}
-	//for (i=0; i<bin_len; i++) {
-	//	avg[i] = 0L;
-	//}
-	//samples = 0;
-	
 }
 
 void print_loudest(int freq, long *dbms)
@@ -2406,180 +2000,24 @@ void print_loudest(int freq, long *dbms)
 
 int main(int argc, char **argv)
 {
-#ifndef _WIN32
-	struct sigaction sigact;
-#endif
-	char *filename = NULL;
-	int i, length, r, opt, wb_mode = 0;
-	int f_set = 0;
-	int gain = AUTO_GAIN; // tenths of a dB
-	int dev_index = 0;
-	int dev_given = 0;
-	int ppm_error = 0;
-	int interval = 10;
-	int fft_threads = 1;
-	int smoothing = 0;
-	int single = 0;
-	int direct_sampling = 0;
-	int offset_tuning = 0;
-	int enable_biastee = 0;
-	double crop = 0.0;
-	char *freq_optarg;
-	time_t next_tick;
-	time_t time_now;
-	time_t exit_time = 0;
-	char t_str[50];
-	struct tm *cal_time;
-	double (*window_fn)(int, int) = rectangle;
-	freq_optarg = "";
+	int r;
 
-	while ((opt = getopt(argc, argv, "f:i:s:t:d:g:p:e:w:c:F:1PDOhT")) != -1) {
-		switch (opt) {
-		case 'f': // lower:upper:bin_size
-			freq_optarg = strdup(optarg);
-			f_set = 1;
-			break;
-		case 'd':
-			dev_index = verbose_device_search(optarg);
-			dev_given = 1;
-			break;
-		case 'g':
-			gain = (int)(atof(optarg) * 10);
-			break;
-		case 'c':
-			crop = atofp(optarg);
-			break;
-		case 'i':
-			interval = (int)round(atoft(optarg));
-			break;
-		case 'e':
-			exit_time = (time_t)((int)round(atoft(optarg)));
-			break;
-		case 's':
-			if (strcmp("avg",  optarg) == 0) {
-				smoothing = 0;}
-			if (strcmp("iir",  optarg) == 0) {
-				smoothing = 1;}
-			break;
-		case 'w':
-			if (strcmp("rectangle",  optarg) == 0) {
-				window_fn = rectangle;}
-			if (strcmp("hamming",  optarg) == 0) {
-				window_fn = hamming;}
-			if (strcmp("blackman",  optarg) == 0) {
-				window_fn = blackman;}
-			if (strcmp("blackman-harris",  optarg) == 0) {
-				window_fn = blackman_harris;}
-			if (strcmp("hann-poisson",  optarg) == 0) {
-				window_fn = hann_poisson;}
-			if (strcmp("youssef",  optarg) == 0) {
-				window_fn = youssef;}
-			if (strcmp("kaiser",  optarg) == 0) {
-				window_fn = kaiser;}
-			if (strcmp("bartlett",  optarg) == 0) {
-				window_fn = bartlett;}
-			break;
-		case 't':
-			fft_threads = atoi(optarg);
-			break;
-		case 'p':
-			ppm_error = atoi(optarg);
-			break;
-		case '1':
-			single = 1;
-			break;
-		case 'P':
-			peak_hold = 1;
-			break;
-		case 'D':
-			direct_sampling = 1;
-			break;
-		case 'O':
-			offset_tuning = 1;
-			break;
-		case 'F':
-			boxcar = 0;
-			comp_fir_size = atoi(optarg);
-			break;
-		case 'T':
-			enable_biastee = 1;
-			break;
-		case 'h':
-		default:
-			usage();
-			break;
-		}
-	}
-
-	if (!f_set) {
-		fprintf(stderr, "No frequency range provided.\n");
-		exit(1);
-	}
-
-	if ((crop < 0.0) || (crop > 1.0)) {
-		fprintf(stderr, "Crop value outside of 0 to 1.\n");
-		exit(1);
-	}
-
-	frequency_range(freq_optarg, crop);
-
-	if (tune_count == 0) {
-		usage();}
-
-	if (argc <= optind) {
-		filename = "-";
-	} else {
-		filename = argv[optind];
-	}
-
-	if (interval < 1) {
-		interval = 1;}
-
-	fprintf(stderr, "Reporting every %i seconds\n", interval);
-
-	if (!dev_given) {
-		dev_index = verbose_device_search("0");
-	}
-
-	if (dev_index < 0) {
-		exit(1);
-	}
-
+	int dev_index = verbose_device_search("0");
 	r = rtlsdr_open(&dev, (uint32_t)dev_index);
 	if (r < 0) {
 		fprintf(stderr, "Failed to open rtlsdr device #%d.\n", dev_index);
 		exit(1);
 	}
-#ifndef _WIN32
-	sigact.sa_handler = sighandler;
-	sigemptyset(&sigact.sa_mask);
-	sigact.sa_flags = 0;
-	sigaction(SIGINT, &sigact, NULL);
-	sigaction(SIGTERM, &sigact, NULL);
-	sigaction(SIGQUIT, &sigact, NULL);
-	sigaction(SIGPIPE, &sigact, NULL);
-#else
-	SetConsoleCtrlHandler( (PHANDLER_ROUTINE) sighandler, TRUE );
-#endif
-
-	if (direct_sampling) {
-		verbose_direct_sampling(dev, 1);
-	}
-
-	if (offset_tuning) {
-		verbose_offset_tuning(dev);
-	}
 
 	/* Set the tuner gain */
-	if (gain == AUTO_GAIN) {
-		verbose_auto_gain(dev);
-	} else {
-		gain = nearest_gain(dev, gain);
-		verbose_gain_set(dev, gain);
-	}
+	verbose_auto_gain(dev);
+	//	gain = nearest_gain(dev, gain);
+	//	verbose_gain_set(dev, gain);
 
+	int ppm_error = 0;
 	verbose_ppm_set(dev, ppm_error);
 
+	int enable_biastee = 0;
 	rtlsdr_set_bias_tee(dev, enable_biastee);
 	if (enable_biastee)
 		fprintf(stderr, "activated bias-T on GPIO PIN 0\n");
@@ -2588,17 +2026,12 @@ int main(int argc, char **argv)
 	verbose_reset_buffer(dev);
 
 	/* actually do stuff */
-	rtlsdr_set_sample_rate(dev, (uint32_t)tunes[0].rate);
-	sine_table(tunes[0].bin_e);
-	next_tick = time(NULL) + interval;
-	if (exit_time) {
-		exit_time = time(NULL) + exit_time;}
-	fft_buf = malloc(tunes[0].buf_len * sizeof(int16_t));
-	length = 1 << tunes[0].bin_e;
-	window_coefs = malloc(length * sizeof(int));
-	for (i=0; i<length; i++) {
-		window_coefs[i] = (int)(256*window_fn(i, length));
-	}
+	int rate = 1000000;
+	int bin_e = 10;
+	int bin_len = 1 << bin_e;
+
+	rtlsdr_set_sample_rate(dev, rate);
+	sine_table(bin_e);
 
 	long dbms[16384];
 
@@ -2608,21 +2041,6 @@ int main(int argc, char **argv)
 	scanner(147000000, dbms);
 	print_loudest(147000000, dbms);
 
-	/* clean up */
-
-	if (do_exit) {
-		fprintf(stderr, "\nUser cancel, exiting...\n");}
-	else {
-		fprintf(stderr, "\nLibrary error %d, exiting...\n", r);}
-
 	rtlsdr_close(dev);
-	free(fft_buf);
-	free(window_coefs);
-	//for (i=0; i<tune_count; i++) {
-	//	free(tunes[i].avg);
-	//	free(tunes[i].buf8);
-	//}
 	return r >= 0 ? r : -r;
 }
-
-// vim: tabstop=8:softtabstop=8:shiftwidth=8:noexpandtab
