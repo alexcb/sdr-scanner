@@ -2274,7 +2274,7 @@ long real_conj(int16_t real, int16_t imag)
 	return ((long)real*(long)real + (long)imag*(long)imag);
 }
 
-void scanner(void)
+void scanner(int freq)
 {
 	int i, j, j2, f, n_read, offset, bin_e, bin_len, buf_len, ds, ds_p;
 	int32_t w;
@@ -2283,12 +2283,8 @@ void scanner(void)
 	bin_len = 1 << bin_e;
 	buf_len = tunes[0].buf_len;
 	for (i=0; i<tune_count; i++) {
-		if (do_exit >= 2)
-			{return;}
 		ts = &tunes[i];
-		f = (int)rtlsdr_get_center_freq(dev);
-		if (f != ts->freq) {
-			retune(dev, ts->freq);}
+		retune(dev, freq);
 		rtlsdr_read_sync(dev, ts->buf8, buf_len, &n_read);
 		if (n_read != buf_len) {
 			fprintf(stderr, "Error: dropped samples.\n");}
@@ -2349,23 +2345,32 @@ void scanner(void)
 		i1 = 0 + (int)((double)len * ts->crop * 0.5);
 		i2 = (len-1) - (int)((double)len * ts->crop * 0.5);
 		int freq = ts->freq - bw2;
+
+		long max_dbm = -9999.0;
+		int max_freq = 0;
+
 		for (i=i1; i<=i2; i++) {
 			dbm  = (double)ts->avg[i];
 			dbm /= (double)ts->rate;
 			dbm /= (double)ts->samples;
 			dbm  = 10 * log10(dbm);
 
-			printf("%d ", i);
-			printf("%d ", freq);
-			printf("%.2f\n", dbm);
+			if( dbm > max_dbm ) {
+				max_dbm = dbm;
+				max_freq = freq;
+			}
+
+			if( dbm > -2.0 ) {
+				printf("%d ", i);
+				printf("%d ", freq);
+				printf("%.2f\n", dbm);
+			}
 			int step = (double)ts->rate / (double)(len*ds);
 			freq += step;
 		}
-		dbm = (double)ts->avg[i2] / ((double)ts->rate * (double)ts->samples);
-		if (ts->bin_e == 0) {
-			dbm = ((double)ts->avg[0] / \
-			((double)ts->rate * (double)ts->samples));}
-		dbm  = 10 * log10(dbm);
+		if( max_freq ) {
+			printf("strongest signal at %d\n", max_freq);
+		}
 		for (i=0; i<len; i++) {
 			ts->avg[i] = 0L;
 		}
@@ -2568,7 +2573,7 @@ int main(int argc, char **argv)
 	for (i=0; i<length; i++) {
 		window_coefs[i] = (int)(256*window_fn(i, length));
 	}
-	scanner();
+	scanner(162500000);
 
 	/* clean up */
 
