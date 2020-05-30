@@ -719,6 +719,21 @@ void plot_dbms(int low_freq, int step, int num_steps, double *dbms)
 	return 0;
 }
 
+int step = (double)rate / (double)(bin_len);
+double dbms[16384];
+//int freq = 162500000;
+int freq = 144000000;
+
+static void* radioscanner( void* arg )
+{
+	for(;;) {
+		scanner(freq, dbms);
+		//print_loudest(freq, step, bin_len, dbms);
+		gtk_widget_queue_draw( da );
+		usleep(10000);	
+	}
+}
+
 int main(int argc, char **argv)
 {
 	int r;
@@ -750,14 +765,8 @@ int main(int argc, char **argv)
 	rtlsdr_set_sample_rate(dev, rate);
 	sine_table(bin_e);
 
-
-	int step = (double)rate / (double)(bin_len);
-
-	double dbms[16384];
-
-	int freq = 162500000;
-	scanner(freq, dbms);
-	print_loudest(freq, step, bin_len, dbms);
+	pthread_t thread;
+	pthread_create( &thread, NULL, radioscanner, NULL );
 
 	//freq = 147000000;
 	//scanner(freq, dbms);
