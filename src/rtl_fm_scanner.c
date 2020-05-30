@@ -50,7 +50,7 @@
 const int rate = 1000000;
 //const int rate = 2800000;
 const int bin_e = 10;
-const int bin_len = 1 << bin_e;
+const int bin_len = 1 << bin_e; // 1024
 const int buf_len = 16384;
 
 
@@ -458,7 +458,7 @@ void retune(rtlsdr_dev_t *d, int freq)
 {
 	uint8_t dump[BUFFER_DUMP];
 	int n_read;
-	printf("turning to %d\n", freq);
+	//printf("tuning to %d\n", freq);
 	rtlsdr_set_center_freq(d, (uint32_t)freq);
 	/* wait for settling and flush buffer */
 	usleep(5000);
@@ -602,6 +602,19 @@ static gboolean mouse_moved(GtkWidget *widget,GdkEvent *event,gpointer user_data
 	}
 }
 
+//static gboolean mouse_scroll(GtkWidget *widget,GdkEvent *event,gpointer user_data)
+//{
+//	if (event->type==GDK_SCROLL) {
+//		GdkEventScroll* e=(GdkEventScroll*)event;
+//		gdouble x, y;
+//		gdk_event_get_scroll_deltas( e, &x, &y );
+//		printf("scroll dir: %d\n", e->direction );
+//		printf("scroll x: (%lf %lf)\n", e->x, x );
+//		printf("scroll y: (%lf %lf)\n", e->y, y );
+//		gtk_widget_queue_draw( da );
+//	}
+//}
+
 
 int sigs_low_freq;
 int sigs_num_steps;
@@ -626,44 +639,50 @@ checkerboard_draw (GtkWidget *da,
 	width = gtk_widget_get_allocated_width (da);
 	height = gtk_widget_get_allocated_height (da);
 	//i = SPACING;
-	int width_per_step = width / sigs_num_steps;
-	if( width_per_step <= 0 ) {
-		printf("too small\n");
-		return TRUE;
-	}
-	printf("draw %d %d\n", width, width_per_step);
-	for( i = 0; i < sigs_num_steps; i++ ) {
-		double ss = sigs[i];
+	//int width_per_step = width / sigs_num_steps;
+	//if( width_per_step <= 0 ) {
+	//	printf("too small\n");
+	//	//return TRUE;
+	//}
+
+	printf("points to plot: %d\n", sigs_num_steps);
+	double scale = (double) sigs_num_steps / (double)width;
+
+	//printf("draw %d %d\n", width, width_per_step);
+	for( i = 0; i < width; i++ ) {
+		int ii = (int)(scale*i);
+		double ss = sigs[ii];
 
 		cairo_set_source_rgb( cr, 0, 0, 0 );
 
 		int y = 200 - ss;
-		cairo_rectangle( cr, i*width_per_step, y, width_per_step, 1);
+
+		cairo_rectangle( cr, i, y, 1, 1);
 		cairo_fill (cr);
 	}
+	//cairo_select_font_face( cr, "Purisa",
+	//		CAIRO_FONT_SLANT_NORMAL,
+	//		CAIRO_FONT_WEIGHT_BOLD);
 
-	cairo_select_font_face( cr, "Purisa",
-			CAIRO_FONT_SLANT_NORMAL,
-			CAIRO_FONT_WEIGHT_BOLD);
+	//cairo_set_font_size(cr, 16);
+	cairo_set_font_size(cr, 16);
 
-	cairo_set_font_size(cr, 13);
+	//int tick_width = 100;
+	//int num_ticks = width / tick_width;
+	//if( num_ticks >= 2 ) {
+	//	for(int i = 0; i < num_ticks; i++ ) {
+	//		int x = i * tick_width;
+	//		char s[1024];
+	//		int freq = sigs_low_freq + (x/width_per_step)*sigs_step;
+	//		sprintf(s, "%d", freq);
 
-	int tick_width = 100;
-	int num_ticks = width / tick_width;
-	if( num_ticks >= 2 ) {
-		for(int i = 0; i < num_ticks; i++ ) {
-			int x = i * tick_width;
-			char s[1024];
-			int freq = sigs_low_freq + (x/width_per_step)*sigs_step;
-			sprintf(s, "%d", freq);
-
-			cairo_move_to(cr, x, 100);
-			cairo_show_text(cr, s);
-		}
-	}
-
+	//		cairo_move_to(cr, x, 100);
+	//		cairo_show_text(cr, s);
+	//	}
+	//}
 	if( 0 <= hover_freq && hover_freq < width ) {
-		int freq = sigs_low_freq + (hover_freq/width_per_step)*sigs_step;
+		int i = (int)((double)hover_freq * scale);
+		int freq = sigs_low_freq + i*sigs_step;
 		char s[1024];
 		sprintf(s, "%d", freq);
 
@@ -707,7 +726,8 @@ void plot_dbms(int low_freq, int step, int num_steps, double *dbms)
 
 	g_signal_connect (da, "draw", G_CALLBACK(checkerboard_draw), NULL);
     g_signal_connect (da, "motion-notify-event", G_CALLBACK(mouse_moved), NULL);
-	gtk_widget_set_events(da, GDK_POINTER_MOTION_MASK);
+    //g_signal_connect (da, "scroll-event", G_CALLBACK(mouse_scroll), NULL);
+	gtk_widget_set_events(da, GDK_POINTER_MOTION_MASK ); // | GDK_SCROLL_MASK 
 
 	//gtk_window_set_default_size( GTK_WINDOW( window ), 700, 700 );
 	gtk_widget_show_all( window );
@@ -724,8 +744,12 @@ int step = (double)rate / (double)(bin_len);
 double *dbms = NULL; //[16384];
 //int freq = 162500000;
 //int freq = 144000000;
-int freq_low = 144000000;
-int freq_high = 146000000;
+//int freq_low = 161000000;
+//int freq_high = 163000000;
+//int freq_high = 163000000;
+int freq_low = 94000000;
+int freq_high = 99000000;
+
 int num_scans = 0;
 
 static void* radioscanner( void* arg )
@@ -735,10 +759,8 @@ static void* radioscanner( void* arg )
 	dbms = malloc(sizeof(double) * bin_len * num_scans);
 	for(;;) {
 		for( int i = 0; i < num_scans; i++ ) {
-			i = 1;
 			int freq = freq_low + i * rate;
 			scanner(freq, dbms + i*bin_len);
-			break;
 		}
 		//print_loudest(freq, step, bin_len, dbms);
 		gtk_widget_queue_draw( da );
@@ -758,9 +780,10 @@ int main(int argc, char **argv)
 	}
 
 	/* Set the tuner gain */
-	verbose_auto_gain(dev);
-	//	gain = nearest_gain(dev, gain);
-	//	verbose_gain_set(dev, gain);
+	// can't use auto-gain because it changes between scan tunes
+	//verbose_auto_gain(dev);
+	int gain = nearest_gain(dev, 30);
+	verbose_gain_set(dev, gain);
 
 	int ppm_error = 0;
 	verbose_ppm_set(dev, ppm_error);
