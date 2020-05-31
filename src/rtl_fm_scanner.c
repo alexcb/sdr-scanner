@@ -47,11 +47,11 @@
 
 #include "rtl-sdr.h"
 
-const int rate = 1000000;
-//const int rate = 2800000;
+//const int rate = 1000000;
+const int rate = 2800000;
 const int bin_e = 10;
 const int bin_len = 1 << bin_e; // 1024
-const int buf_len = 16384;
+const int buf_len = 16384*8;
 
 
 double atofs( char* s )
@@ -502,18 +502,18 @@ void scanner(int low_freq, double *dbms)
 
 	retune(dev, center_freq);
 
-	uint8_t buf8[16384];
-	long avg[16384];
-	memset(avg, 0, 16384*sizeof(long));
+	uint8_t buf8[buf_len];
+	long avg[buf_len];
+	memset(avg, 0, buf_len*sizeof(long));
 	int samples;
 
-	int rate = 1000000;
-
-	int16_t fft_buf[16384];
+	int16_t fft_buf[buf_len];
 
 	rtlsdr_read_sync(dev, buf8, buf_len, &n_read);
 	if (n_read != buf_len) {
-		fprintf(stderr, "Error: dropped samples.\n");}
+		fprintf(stderr, "Error: dropped samples.\n");
+		exit(1);
+	}
 
 	/* prep for fft */
 	for (j=0; j<buf_len; j++) {
@@ -596,9 +596,10 @@ static gboolean mouse_moved(GtkWidget *widget,GdkEvent *event,gpointer user_data
 {
 	if (event->type==GDK_MOTION_NOTIFY) {
 		GdkEventMotion* e=(GdkEventMotion*)event;
-		printf("Coordinates: (%u,%u)\n", (guint)e->x,(guint)e->y);
 		hover_freq = e->x;
+		printf("queue draw\n");
 		gtk_widget_queue_draw( da );
+		printf("queue draw done\n");
 	}
 }
 
@@ -683,7 +684,7 @@ checkerboard_draw (GtkWidget *da,
 
 	double view_range = view_end - view_start;
 
-	printf("points to plot: %d\n", sigs_num_steps);
+	//printf("points to plot: %d\n", sigs_num_steps);
 	double scale = (double) sigs_num_steps*view_range / (double)width;
 
 	double clamp_range = clamp_max_dbm - clamp_min_dbm;
@@ -791,6 +792,42 @@ void plot_dbms(int low_freq, int step, int num_steps, double *dbms)
 	return 0;
 }
 
+double window(double *dbms, int num_samples)
+{
+	double sum = 0.0;
+	for(int i = 0; i < num_samples; i++ ) {
+		sum += dbms[i];
+	}
+	return sum / num_samples;
+}
+
+void find_channels(int low_freq, int step, int num_steps, double *dbms)
+{
+	double min_dbm = -45.0;
+
+	char buf[1024];
+
+	int win_size = 1;
+
+	printf("---\n");
+	int last_max = -1;
+	double last_dbm = -99999;
+	for (int i=0; i<(num_steps-win_size); i++) {
+		double avg = window(dbms+i, win_size);
+		if( avg > last_dbm ) {
+			last_dbm = avg;
+			last_max = i;
+		} else {
+			if( last_dbm > min_dbm ) {
+				int freq = low_freq + (i+win_size/2)*step;
+				fmt_freq( buf, freq );
+				printf("%s: %lf\n", buf, last_dbm);
+			}
+			last_dbm = -9999;
+		}
+	}
+}
+
 
 int step = (double)rate / (double)(bin_len);
 double *dbms = NULL; //[16384];
@@ -804,12 +841,12 @@ double *dbms = NULL; //[16384];
 //int freq_low = 440000000;
 //int freq_high = 460000000;
 
-//int freq_low = 161000000;
-//int freq_high = 163000000;
+int freq_low = 159000000;
+int freq_high = 165000000;
 
 // vhf range
-int freq_low = 130000000;
-int freq_high = 175000000;
+//int freq_low = 130000000;
+//int freq_high = 175000000;
 
 int num_scans = 0;
 
@@ -823,6 +860,9 @@ static void* radioscanner( void* arg )
 			int freq = freq_low + i * rate;
 			scanner(freq, dbms + i*bin_len);
 		}
+
+		find_channels(freq_low, step, bin_len*num_scans, dbms);
+
 		//print_loudest(freq, step, bin_len, dbms);
 		gtk_widget_queue_draw( da );
 		usleep(10000);
