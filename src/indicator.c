@@ -515,6 +515,33 @@ void normalize_signals(double *dbms, int num)
 	for(int i = 1; i < num; i++) {
 		dbms[i] = (dbms[i] - min) / range;
 	}
+	printf("min=%lf max=%lf\n", min, max);
+}
+
+double get_dbms_avg(double *dbms, int i1, int i2)
+{
+	double sum = 0.0;
+	int count = 0;
+	while(i1 <= i2) {
+		sum += dbms[i1];
+		count += 1;
+		i1++;
+	}
+	assert(count);
+	return sum / count;
+}
+
+double get_dbms_max(double *dbms, int i1, int i2)
+{
+	double max = dbms[i1];
+	i1++;
+	while(i1 <= i2) {
+		if( dbms[i1] > max ) {
+			max = dbms[i1];
+		}
+		i1++;
+	}
+	return max;
 }
 
 static gboolean
@@ -555,14 +582,17 @@ checkerboard_draw (GtkWidget *da,
 
 	printf("draw %d %d %d %lf\n", width, gd->num_scans, start_i, scale);
 	for( i = 0; i < width; i++ ) {
-		int ii = start_i + (int)(scale*i);
-		if( ii < 0 ) { ii = 0; printf("warning less than 0\n");}
-		if( ii >= gd->num_scans ) {
-			printf("%d vs %d warning too big\n", ii, gd->num_scans);
-			ii = gd->num_scans-1;
+		int i1 = start_i + (int)(scale*i);
+		int i2 = start_i + (int)(scale*(i+1));
+		if( i1 >= gd->num_scans ) {
+			//printf("%d vs %d warning too big\n", ii, gd->num_scans);
+			i1 = gd->num_scans-1;
 			break;
 		}
-		double ss = gd->dbms[ii];
+		if( i2 >= gd->num_scans ) {
+			i2 = i1;
+		}
+		double ss = get_dbms_max(gd->dbms, i1, i2);
 		//printf("%lf\n", ss);
 		//if( ss < clamp_min_dbm ) { ss = clamp_min_dbm; }
 		//if( ss > clamp_max_dbm ) { ss = clamp_max_dbm; }
@@ -664,6 +694,12 @@ void dbms_update(double *dbms, int start_freq, int freq_step, int num_steps, voi
 {
 	struct gui_data *gd = user_data;
 
+	for(int i = 0; i < num_steps; i++) {
+		if( isnan(dbms[i]) ) {
+			printf("nan at %d\n", i);
+		}
+	}
+
 	usleep(100000);
 
 	pthread_mutex_lock(&(gd->mutex));
@@ -702,8 +738,11 @@ int main(int argc, char **argv)
 	gd.freq_low = 159000000;
 	gd.freq_high = 165000000;
 
-	gd.freq_low = 100000000;
-	gd.freq_high = 400000000;
+	if( argc == 3 ) {
+		gd.freq_low = atoi(argv[1]) * 1000000;
+		gd.freq_high = atoi(argv[2]) * 1000000;
+	}
+
 
 	size_t n = gd.freq_high - gd.freq_low; // TODO fix size
 	gd.dbms = malloc(n*sizeof(double));

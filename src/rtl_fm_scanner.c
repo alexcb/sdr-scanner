@@ -539,7 +539,7 @@ void scanner(struct radio_scanner *rs, int low_freq, double *dbms)
 	uint8_t buf8[buf_len];
 	long avg[buf_len];
 	memset(avg, 0, buf_len*sizeof(long));
-	int samples;
+	int samples = 0;
 
 	int16_t fft_buf[buf_len];
 
@@ -591,6 +591,9 @@ void scanner(struct radio_scanner *rs, int low_freq, double *dbms)
 		dbm /= (double)samples;
 		dbm  = 10 * log10(dbm);
 		dbms[i] = dbm;
+		if( isnan(dbm) ) {
+			printf("avg=%ld rate=%d samples=%d\n", avg[i], rate, samples);
+		}
 	}
 }
 
