@@ -1,8 +1,9 @@
+
 //#include "custom-list.h"
 //#include "rtl_fm_scanner.h"
 //#include "should_stop.h"
 //
-//#include <assert.h>
+#include <assert.h>
 //
 //#include <libayatana-appindicator/app-indicator.h>
 //#include <libdbusmenu-glib/menuitem.h>
@@ -419,3 +420,307 @@
 //
 //	return 0;
 //}
+
+//extern int step;
+//extern int num_scans;
+//extern double *dbms;
+
+#include <gdk/gdk.h>
+#include <gtk/gtk.h>
+
+struct gui_data {
+	GtkWidget *da;
+
+	int freq_low;
+	int freq_high;
+
+	double *dbms;
+	int freq_step;
+	int num_scans;
+
+	double view_start;
+	double view_end;
+	double zoom_dbm;
+
+	pthread_mutex_t mutex;
+};
+
+
+int hover_freq = -1;
+
+static gboolean mouse_moved(GtkWidget *widget,GdkEvent *event,gpointer user_data)
+{
+	struct gui_data *gd = user_data;
+	if (event->type==GDK_MOTION_NOTIFY) {
+		GdkEventMotion* e=(GdkEventMotion*)event;
+		hover_freq = e->x;
+		gtk_widget_queue_draw( gd->da );
+	}
+}
+
+static gboolean mouse_scroll(GtkWidget *widget,GdkEvent *event,gpointer user_data)
+{
+	struct gui_data *gd = user_data;
+	int width = gtk_widget_get_allocated_width (gd->da);
+
+	if (event->type==GDK_SCROLL) {
+		GdkEventScroll* e=(GdkEventScroll*)event;
+		gdouble x, y;
+		gdk_event_get_scroll_deltas( e, &x, &y );
+
+		double ratio = (double) e->x / (double) width;
+
+		double view_range = gd->view_end - gd->view_start;
+		double scale = view_range / 10.0;
+
+		if( e->direction == GDK_SCROLL_UP ) {
+			printf("zoom in %lf\n", ratio);
+			gd->view_start += scale*(ratio);
+			gd->view_end -= scale*(1.0-ratio);
+		}
+		if( e->direction == GDK_SCROLL_DOWN ) {
+			printf("zoom out\n");
+			gd->view_start -= scale*(ratio);
+			gd->view_end += scale*(1.0-ratio);
+		}
+		if( gd->view_start < 0.0 )
+			gd->view_start = 0.0;
+		if( gd->view_end > 1.0 )
+			gd->view_end = 1.0;
+		//printf("scroll dir: %d\n", e->direction );
+		//printf("scroll x: (%lf %lf)\n", e->x, x );
+		//printf("scroll y: (%lf %lf)\n", e->y, y );
+		gtk_widget_queue_draw( gd->da );
+	}
+}
+
+
+void fmt_freq(char *s, int freq)
+{
+	int mhz = freq / 1000000;
+	int khz = (freq % 1000000) / 1000;
+	sprintf(s, "%d.%03d", mhz, khz);
+}
+
+void normalize_signals(double *dbms, int num)
+{
+	if(num <= 0) { return; }
+	double max, min;
+	max=min=dbms[0];
+	for(int i = 1; i < num; i++) {
+		if( dbms[i] > max ) max = dbms[i];
+		if( dbms[i] < min ) min = dbms[i];
+	}
+	double range = max - min;
+	for(int i = 1; i < num; i++) {
+		dbms[i] = (dbms[i] - min) / range;
+	}
+}
+
+static gboolean
+checkerboard_draw (GtkWidget *da,
+                   cairo_t   *cr,
+                   gpointer   data)
+{
+	struct gui_data *gd = (struct gui_data*) data;
+	gint i, j, xcount, width, height;
+
+	pthread_mutex_lock(&(gd->mutex));
+
+	unsigned char buf[32*1024];
+	//get_radio_raw_buf( &rs, buf );
+	//get_radio_rot_buf( &rs, buf );
+
+	//xcount = 0;
+	width = gtk_widget_get_allocated_width (da);
+	height = gtk_widget_get_allocated_height (da);
+	//i = SPACING;
+	//int width_per_step = width / sigs_num_steps;
+	//if( width_per_step <= 0 ) {
+	//	printf("too small\n");
+	//	//return TRUE;
+	//}
+
+	double view_range = gd->view_end - gd->view_start;
+
+	//printf("points to plot: %d\n", sigs_num_steps);
+	double scale = (double) gd->num_scans*view_range / (double)width;
+
+	//double clamp_range = clamp_max_dbm - clamp_min_dbm;
+
+	int start_i = gd->view_start * gd->num_scans;
+
+	double clamp_min_dbm = -100.0;
+	double clamp_max_dbm = 0.0;
+
+	printf("draw %d %d %d %lf\n", width, gd->num_scans, start_i, scale);
+	for( i = 0; i < width; i++ ) {
+		int ii = start_i + (int)(scale*i);
+		if( ii < 0 ) { ii = 0; printf("warning less than 0\n");}
+		if( ii >= gd->num_scans ) {
+			printf("%d vs %d warning too big\n", ii, gd->num_scans);
+			ii = gd->num_scans-1;
+			break;
+		}
+		double ss = gd->dbms[ii];
+		//printf("%lf\n", ss);
+		//if( ss < clamp_min_dbm ) { ss = clamp_min_dbm; }
+		//if( ss > clamp_max_dbm ) { ss = clamp_max_dbm; }
+		//ss -= clamp_min_dbm;
+		//ss /= (clamp_max_dbm - clamp_min_dbm);
+
+		ss *= 200.0;
+		//ss *= zoom_dbm;
+
+		int y = 200 - ss; // * 300.0;
+
+		cairo_set_source_rgb( cr, 0, 0, 0 );
+
+		cairo_rectangle( cr, i, y, 3, 3);
+		cairo_fill (cr);
+	}
+	//cairo_select_font_face( cr, "Purisa",
+	//		CAIRO_FONT_SLANT_NORMAL,
+	//		CAIRO_FONT_WEIGHT_BOLD);
+
+	//cairo_set_font_size(cr, 16);
+	cairo_set_font_size(cr, 16);
+
+	//int tick_width = 100;
+	//int num_ticks = width / tick_width;
+	//if( num_ticks >= 2 ) {
+	//	for(int i = 0; i < num_ticks; i++ ) {
+	//		int x = i * tick_width;
+	//		char s[1024];
+	//		int freq = sigs_low_freq + (x/width_per_step)*sigs_step;
+	//		sprintf(s, "%d", freq);
+
+	//		cairo_move_to(cr, x, 100);
+	//		cairo_show_text(cr, s);
+	//	}
+	//}
+	if( 0 <= hover_freq && hover_freq < width ) {
+		int i = start_i + (int)((double)hover_freq * scale);
+		int freq = gd->freq_low + i*gd->freq_step;
+		char s[1024];
+		fmt_freq(s, freq);
+
+		cairo_move_to(cr, 50, 50);
+		cairo_show_text(cr, s);
+	}
+
+	pthread_mutex_unlock(&(gd->mutex));
+
+	/* return TRUE because we've handled this event, so no
+	 * further processing is required.
+	 */
+	return TRUE;
+}
+
+void plot_dbms(struct gui_data *gd) //int low_freq, int step, int num_steps, double *dbms)
+{
+	//sigs_low_freq = low_freq;
+	//sigs_num_steps = num_steps;
+	//sigs_step = step;
+	//sigs = dbms;
+	//int cur_freq = low_freq;
+	//for (int i=0; i<num_steps; i++) {
+	//	printf("%d %lf\n", cur_freq, dbms[i]);
+	//	cur_freq += step;
+	//}
+	GtkWidget *window = gtk_window_new( GTK_WINDOW_TOPLEVEL );
+
+	GtkWidget* vbox = gtk_box_new( GTK_ORIENTATION_VERTICAL, 8 );
+	gtk_container_add( GTK_CONTAINER( window ), vbox );
+
+
+	// drawing area for waterfall
+	GtkWidget* frame = gtk_frame_new (NULL);
+	gtk_frame_set_shadow_type (GTK_FRAME (frame), GTK_SHADOW_IN);
+	gtk_box_pack_start (GTK_BOX (vbox), frame, TRUE, TRUE, 0);
+
+	gd->da = gtk_drawing_area_new ();
+	/* set a minimum size */
+	gtk_widget_set_size_request (gd->da, 100, 100);
+
+	gtk_container_add (GTK_CONTAINER (frame), gd->da);
+
+	g_signal_connect (gd->da, "draw", G_CALLBACK(checkerboard_draw), gd);
+    g_signal_connect (gd->da, "motion-notify-event", G_CALLBACK(mouse_moved), gd);
+    g_signal_connect (gd->da, "scroll-event", G_CALLBACK(mouse_scroll), gd);
+	gtk_widget_set_events(gd->da, GDK_POINTER_MOTION_MASK | GDK_SCROLL_MASK );
+
+	gtk_window_set_default_size( GTK_WINDOW( window ), 3000, 700 );
+	gtk_widget_show_all( window );
+
+	GMainLoop* mainloop = NULL;
+	mainloop = g_main_loop_new( NULL, FALSE );
+	g_main_loop_run( mainloop );
+
+	return 0;
+}
+
+void dbms_update(double *dbms, int start_freq, int freq_step, int num_steps, void *user_data)
+{
+	struct gui_data *gd = user_data;
+
+	usleep(100000);
+
+	pthread_mutex_lock(&(gd->mutex));
+	memcpy(gd->dbms, dbms, num_steps*sizeof(double));
+
+	//printf("%d %d\n", freq_step, num_steps);
+	gd->freq_step = freq_step;
+	gd->num_scans = num_steps;
+
+	normalize_signals(gd->dbms, num_steps);
+
+	pthread_mutex_unlock(&(gd->mutex));
+
+
+	if( gd->da ) {
+		gtk_widget_queue_draw( gd->da );
+	}
+
+	//double min, max;
+	//min = max = gd->dbms[0];
+	//for(int i = 1; i < num_steps; i++ ) {
+	//	if( gd->dbms[i] > max ) { max = gd->dbms[i]; }
+	//	if( gd->dbms[i] < min ) { min = gd->dbms[i]; }
+	//}
+	//printf("%lf %lf\n", min, max);
+
+}
+
+int main(int argc, char **argv)
+{
+	gtk_init( &argc, &argv );
+
+	struct gui_data gd;
+	memset(&gd, 0, sizeof(struct gui_data));
+	pthread_mutex_init(&gd.mutex, NULL);
+	gd.freq_low = 159000000;
+	gd.freq_high = 165000000;
+
+	gd.freq_low = 100000000;
+	gd.freq_high = 400000000;
+
+	size_t n = gd.freq_high - gd.freq_low; // TODO fix size
+	gd.dbms = malloc(n*sizeof(double));
+	assert(gd.dbms);
+
+	gd.view_start = 0.0;
+	gd.view_end = 1.0;
+	gd.zoom_dbm = 1.0;
+
+	struct radio_scanner *rs;
+	init_radio(&rs, dbms_update, &gd);
+
+	radio_sample(rs, gd.freq_low, gd.freq_high);
+
+	plot_dbms(&gd); //freq_low, step, bin_len*num_scans, dbms);
+
+	stop_radio(rs);
+
+	return 0;
+}

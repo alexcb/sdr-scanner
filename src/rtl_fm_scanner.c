@@ -29,6 +29,8 @@
 // */
 //
 
+#include "rtl_fm_scanner.h"
+
 #include <stdlib.h>
 #include <string.h>
 
@@ -52,6 +54,40 @@ const int rate = 2800000;
 const int bin_e = 10;
 const int bin_len = 1 << bin_e; // 1024
 const int buf_len = 16384*8;
+
+struct radio_scanner {
+	dbms_cb_t dbms_cb;
+	void *dbms_cb_user_data;
+	rtlsdr_dev_t *dev;
+	pthread_mutex_t mutex;
+	int freq_low, freq_high;
+};
+//int step = (double)rate / (double)(bin_len);
+//double *dbms = NULL; //[16384];
+//int num_scans = 0;
+
+int sigs_low_freq;
+int sigs_num_steps;
+int sigs_step;
+double *sigs;
+
+double clamp_min_dbm = -100.0;
+double clamp_max_dbm = 0.0;
+
+//int freq_low = 89000000;
+//int freq_high = 107000000;
+
+//int freq_low = 144000000;
+//int freq_high = 148000000;
+
+//int freq_low = 440000000;
+//int freq_high = 460000000;
+
+
+// vhf range
+//int freq_low = 130000000;
+//int freq_high = 175000000;
+
 
 
 double atofs( char* s )
@@ -342,8 +378,6 @@ int verbose_device_search( char* s )
 #define BUFFER_DUMP			(1<<12)
 
 
-static rtlsdr_dev_t *dev = NULL;
-
 int16_t* Sinewave;
 double* power_table;
 int N_WAVE, LOG2_N_WAVE;
@@ -490,7 +524,7 @@ long real_conj(int16_t real, int16_t imag)
 	return ((long)real*(long)real + (long)imag*(long)imag);
 }
 
-void scanner(int low_freq, double *dbms)
+void scanner(struct radio_scanner *rs, int low_freq, double *dbms)
 {
 	int i, j, n_read, offset;
 	int32_t w;
@@ -500,7 +534,7 @@ void scanner(int low_freq, double *dbms)
 	int bw2 = rate / 2;
 	int center_freq = low_freq + bw2;
 
-	retune(dev, center_freq);
+	retune(rs->dev, center_freq);
 
 	uint8_t buf8[buf_len];
 	long avg[buf_len];
@@ -509,7 +543,7 @@ void scanner(int low_freq, double *dbms)
 
 	int16_t fft_buf[buf_len];
 
-	rtlsdr_read_sync(dev, buf8, buf_len, &n_read);
+	rtlsdr_read_sync(rs->dev, buf8, buf_len, &n_read);
 	if (n_read != buf_len) {
 		fprintf(stderr, "Error: dropped samples.\n");
 		exit(1);
@@ -585,212 +619,6 @@ void print_loudest(int low_freq, int step, int num_steps, double *dbms)
 	}
 }
 
-#include <gdk/gdk.h>
-#include <gtk/gtk.h>
-
-GtkWidget *da = NULL;
-
-int hover_freq = -1;
-
-static gboolean mouse_moved(GtkWidget *widget,GdkEvent *event,gpointer user_data)
-{
-	if (event->type==GDK_MOTION_NOTIFY) {
-		GdkEventMotion* e=(GdkEventMotion*)event;
-		hover_freq = e->x;
-		printf("queue draw\n");
-		gtk_widget_queue_draw( da );
-		printf("queue draw done\n");
-	}
-}
-
-double view_start = 0.0;
-double view_end = 1.0;
-
-double zoom_dbm = 1.0;
-static gboolean mouse_scroll(GtkWidget *widget,GdkEvent *event,gpointer user_data)
-{
-	int width = gtk_widget_get_allocated_width (da);
-
-	if (event->type==GDK_SCROLL) {
-		GdkEventScroll* e=(GdkEventScroll*)event;
-		gdouble x, y;
-		gdk_event_get_scroll_deltas( e, &x, &y );
-
-		double ratio = (double) e->x / (double) width;
-
-		double view_range = view_end - view_start;
-		double scale = view_range / 10.0;
-
-		if( e->direction == GDK_SCROLL_UP ) {
-			printf("zoom in %lf\n", ratio);
-			view_start += scale*(ratio);
-			view_end -= scale*(1.0-ratio);
-		}
-		if( e->direction == GDK_SCROLL_DOWN ) {
-			printf("zoom out\n");
-			view_start -= scale*(ratio);
-			view_end += scale*(1.0-ratio);
-		}
-		if( view_end > 1.0 )
-			view_end = 1.0;
-		if( view_start < 0.0 )
-			view_start = 0.0;
-		//printf("scroll dir: %d\n", e->direction );
-		//printf("scroll x: (%lf %lf)\n", e->x, x );
-		//printf("scroll y: (%lf %lf)\n", e->y, y );
-		gtk_widget_queue_draw( da );
-	}
-}
-
-
-int sigs_low_freq;
-int sigs_num_steps;
-int sigs_step;
-double *sigs;
-
-double clamp_min_dbm = -100.0;
-double clamp_max_dbm = 0.0;
-
-void fmt_freq(char *s, int freq)
-{
-	int mhz = freq / 1000000;
-	int khz = (freq % 1000000) / 1000;
-	sprintf(s, "%d.%03d", mhz, khz);
-}
-
-static gboolean
-checkerboard_draw (GtkWidget *da,
-                   cairo_t   *cr,
-                   gpointer   data)
-{
-	gint i, j, xcount, width, height;
-
-#define CHECK_SIZE 10
-#define SPACING 2
-
-	unsigned char buf[32*1024];
-	//get_radio_raw_buf( &rs, buf );
-	//get_radio_rot_buf( &rs, buf );
-
-	//xcount = 0;
-	width = gtk_widget_get_allocated_width (da);
-	height = gtk_widget_get_allocated_height (da);
-	//i = SPACING;
-	//int width_per_step = width / sigs_num_steps;
-	//if( width_per_step <= 0 ) {
-	//	printf("too small\n");
-	//	//return TRUE;
-	//}
-
-	double view_range = view_end - view_start;
-
-	//printf("points to plot: %d\n", sigs_num_steps);
-	double scale = (double) sigs_num_steps*view_range / (double)width;
-
-	double clamp_range = clamp_max_dbm - clamp_min_dbm;
-
-	int start_i = view_start * sigs_num_steps;
-
-
-	//printf("draw %d %d\n", width, width_per_step);
-	for( i = 0; i < width; i++ ) {
-		int ii = start_i + (int)(scale*i);
-		if( ii < 0 ) { ii = 0; printf("warning less than 0\n");}
-		if( ii >= sigs_num_steps ) { ii = sigs_num_steps-1; printf("warning too big\n");}
-		double ss = sigs[ii];
-		if( ss < clamp_min_dbm ) { ss = clamp_min_dbm; }
-		if( ss > clamp_max_dbm ) { ss = clamp_max_dbm; }
-		ss -= clamp_min_dbm;
-		ss /= (clamp_max_dbm - clamp_min_dbm);
-
-		ss *= 200.0;
-		//ss *= zoom_dbm;
-
-		int y = 200 - ss; // * 300.0;
-
-		cairo_set_source_rgb( cr, 0, 0, 0 );
-
-		cairo_rectangle( cr, i, y, 3, 3);
-		cairo_fill (cr);
-	}
-	//cairo_select_font_face( cr, "Purisa",
-	//		CAIRO_FONT_SLANT_NORMAL,
-	//		CAIRO_FONT_WEIGHT_BOLD);
-
-	//cairo_set_font_size(cr, 16);
-	cairo_set_font_size(cr, 16);
-
-	//int tick_width = 100;
-	//int num_ticks = width / tick_width;
-	//if( num_ticks >= 2 ) {
-	//	for(int i = 0; i < num_ticks; i++ ) {
-	//		int x = i * tick_width;
-	//		char s[1024];
-	//		int freq = sigs_low_freq + (x/width_per_step)*sigs_step;
-	//		sprintf(s, "%d", freq);
-
-	//		cairo_move_to(cr, x, 100);
-	//		cairo_show_text(cr, s);
-	//	}
-	//}
-	if( 0 <= hover_freq && hover_freq < width ) {
-		int i = start_i + (int)((double)hover_freq * scale);
-		int freq = sigs_low_freq + i*sigs_step;
-		char s[1024];
-		fmt_freq(s, freq);
-
-		cairo_move_to(cr, 50, 50);
-		cairo_show_text(cr, s);
-	}
-
-	/* return TRUE because we've handled this event, so no
-	 * further processing is required.
-	 */
-	return TRUE;
-}
-
-void plot_dbms(int low_freq, int step, int num_steps, double *dbms)
-{
-	sigs_low_freq = low_freq;
-	sigs_num_steps = num_steps;
-	sigs_step = step;
-	sigs = dbms;
-	//int cur_freq = low_freq;
-	//for (int i=0; i<num_steps; i++) {
-	//	printf("%d %lf\n", cur_freq, dbms[i]);
-	//	cur_freq += step;
-	//}
-	GtkWidget *window = gtk_window_new( GTK_WINDOW_TOPLEVEL );
-
-	GtkWidget* vbox = gtk_box_new( GTK_ORIENTATION_VERTICAL, 8 );
-	gtk_container_add( GTK_CONTAINER( window ), vbox );
-
-
-	// drawing area for waterfall
-	GtkWidget* frame = gtk_frame_new (NULL);
-	gtk_frame_set_shadow_type (GTK_FRAME (frame), GTK_SHADOW_IN);
-	gtk_box_pack_start (GTK_BOX (vbox), frame, TRUE, TRUE, 0);
-
-	da = gtk_drawing_area_new ();
-	/* set a minimum size */
-	gtk_widget_set_size_request (da, 100, 100);
-
-	gtk_container_add (GTK_CONTAINER (frame), da);
-
-	g_signal_connect (da, "draw", G_CALLBACK(checkerboard_draw), NULL);
-    g_signal_connect (da, "motion-notify-event", G_CALLBACK(mouse_moved), NULL);
-    g_signal_connect (da, "scroll-event", G_CALLBACK(mouse_scroll), NULL);
-	gtk_widget_set_events(da, GDK_POINTER_MOTION_MASK | GDK_SCROLL_MASK );
-
-	gtk_window_set_default_size( GTK_WINDOW( window ), 3000, 700 );
-	gtk_widget_show_all( window );
-
-	GMainLoop* mainloop = NULL;
-	mainloop = g_main_loop_new( NULL, FALSE );
-	g_main_loop_run( mainloop );
-
-	return 0;
-}
 
 double window(double *dbms, int num_samples)
 {
@@ -829,52 +657,38 @@ void find_channels(int low_freq, int step, int num_steps, double *dbms)
 }
 
 
-int step = (double)rate / (double)(bin_len);
-double *dbms = NULL; //[16384];
-
-//int freq_low = 89000000;
-//int freq_high = 107000000;
-
-//int freq_low = 144000000;
-//int freq_high = 148000000;
-
-//int freq_low = 440000000;
-//int freq_high = 460000000;
-
-int freq_low = 159000000;
-int freq_high = 165000000;
-
-// vhf range
-//int freq_low = 130000000;
-//int freq_high = 175000000;
-
-int num_scans = 0;
 
 static void* radioscanner( void* arg )
 {
-	int scan_bw = freq_high - freq_low;
-	num_scans = ( scan_bw / rate ) + 1;
-	dbms = malloc(sizeof(double) * bin_len * num_scans);
+	struct radio_scanner *rs = arg;
+	int scan_bw = rs->freq_high - rs->freq_low;
+	int num_scans = ( scan_bw / rate ) + 1;
+	int step = (double)rate / (double)(bin_len);
+	double *dbms = malloc(sizeof(double) * bin_len * num_scans);
 	for(;;) {
+		pthread_mutex_lock(&(rs->mutex));
 		for( int i = 0; i < num_scans; i++ ) {
-			int freq = freq_low + i * rate;
-			scanner(freq, dbms + i*bin_len);
+			int freq = rs->freq_low + i * rate;
+			scanner(rs, freq, dbms + i*bin_len);
 		}
 
-		find_channels(freq_low, step, bin_len*num_scans, dbms);
-
-		//print_loudest(freq, step, bin_len, dbms);
-		gtk_widget_queue_draw( da );
+		rs->dbms_cb(dbms, rs->freq_low, step, bin_len*num_scans, rs->dbms_cb_user_data);
+		pthread_mutex_unlock(&(rs->mutex));
 		usleep(10000);
 	}
 }
-
-int main(int argc, char **argv)
+pthread_t thread;
+int init_radio(struct radio_scanner **rs, dbms_cb_t dbms_cb, void *user_data)
 {
 	int r;
+	*rs = malloc(sizeof(struct radio_scanner));
+	memset(*rs, 0, sizeof(struct radio_scanner));
+	(**rs).dbms_cb = dbms_cb;
+	(**rs).dbms_cb_user_data = user_data;
+	assert(pthread_mutex_init(&(**rs).mutex, NULL) == 0);
 
 	int dev_index = verbose_device_search("0");
-	r = rtlsdr_open(&dev, (uint32_t)dev_index);
+	r = rtlsdr_open(&((**rs).dev), (uint32_t)dev_index);
 	if (r < 0) {
 		fprintf(stderr, "Failed to open rtlsdr device #%d.\n", dev_index);
 		exit(1);
@@ -883,38 +697,39 @@ int main(int argc, char **argv)
 	/* Set the tuner gain */
 	// can't use auto-gain because it changes between scan tunes
 	//verbose_auto_gain(dev);
-	int gain = nearest_gain(dev, 100);
-	verbose_gain_set(dev, gain);
+	int gain = nearest_gain((**rs).dev, 100);
+	verbose_gain_set((**rs).dev, gain);
 
 	int ppm_error = 0;
-	verbose_ppm_set(dev, ppm_error);
+	verbose_ppm_set((**rs).dev, ppm_error);
 
 	int enable_biastee = 0;
-	rtlsdr_set_bias_tee(dev, enable_biastee);
+	rtlsdr_set_bias_tee((**rs).dev, enable_biastee);
 	if (enable_biastee)
 		fprintf(stderr, "activated bias-T on GPIO PIN 0\n");
 
 	/* Reset endpoint before we start reading from it (mandatory) */
-	verbose_reset_buffer(dev);
+	verbose_reset_buffer((**rs).dev);
 
 	/* actually do stuff */
-	rtlsdr_set_sample_rate(dev, rate);
+	rtlsdr_set_sample_rate((**rs).dev, rate);
 	sine_table(bin_e);
 
-	pthread_t thread;
-	pthread_create( &thread, NULL, radioscanner, NULL );
+	pthread_create( &thread, NULL, radioscanner, *rs );
 
-	//freq = 147000000;
-	//scanner(freq, dbms);
-	//print_loudest(freq, step, bin_len, dbms);
+	return 0;
+}
 
-	// TODO HACK to allow thread to init stuff before continuing
-	usleep(100);
+int stop_radio(struct radio_scanner *rs)
+{
+	rtlsdr_close(rs->dev);
+}
 
-	gtk_init( &argc, &argv );
-	plot_dbms(freq_low, step, bin_len*num_scans, dbms);
-
-
-	rtlsdr_close(dev);
-	return r >= 0 ? r : -r;
+int radio_sample( struct radio_scanner* rs, int freq_low, int freq_high )
+{
+	pthread_mutex_lock(&(rs->mutex));
+	rs->freq_low = freq_low;
+	rs->freq_high = freq_high;
+	pthread_mutex_unlock(&(rs->mutex));
+	return 0;
 }
