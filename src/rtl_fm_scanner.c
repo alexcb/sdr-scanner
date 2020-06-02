@@ -591,9 +591,9 @@ void scanner(struct radio_scanner *rs, int low_freq, double *dbms)
 		dbm /= (double)samples;
 		dbm  = 10 * log10(dbm);
 		dbms[i] = dbm;
-		if( isnan(dbm) ) {
-			printf("avg=%ld rate=%d samples=%d\n", avg[i], rate, samples);
-		}
+		//if( isnan(dbm) ) {
+		//	printf("avg=%ld rate=%d samples=%d\n", avg[i], rate, samples);
+		//}
 	}
 }
 

@@ -694,12 +694,6 @@ void dbms_update(double *dbms, int start_freq, int freq_step, int num_steps, voi
 {
 	struct gui_data *gd = user_data;
 
-	for(int i = 0; i < num_steps; i++) {
-		if( isnan(dbms[i]) ) {
-			printf("nan at %d\n", i);
-		}
-	}
-
 	usleep(100000);
 
 	pthread_mutex_lock(&(gd->mutex));
