@@ -4,6 +4,7 @@
 //#include "should_stop.h"
 //
 #include <assert.h>
+#include "rtl_fm_scanner.h" 
 //
 //#include <libayatana-appindicator/app-indicator.h>
 //#include <libdbusmenu-glib/menuitem.h>
@@ -427,6 +428,7 @@
 
 #include <gdk/gdk.h>
 #include <gtk/gtk.h>
+#include <stdbool.h>
 
 struct gui_data {
 	GtkWidget *da;
@@ -441,6 +443,8 @@ struct gui_data {
 	double view_start;
 	double view_end;
 	double zoom_dbm;
+
+	bool normalize;
 
 	pthread_mutex_t mutex;
 };
@@ -515,7 +519,6 @@ void normalize_signals(double *dbms, int num)
 	for(int i = 1; i < num; i++) {
 		dbms[i] = (dbms[i] - min) / range;
 	}
-	printf("min=%lf max=%lf\n", min, max);
 }
 
 double get_dbms_avg(double *dbms, int i1, int i2)
@@ -544,15 +547,68 @@ double get_dbms_max(double *dbms, int i1, int i2)
 	return max;
 }
 
+double clamp_range(double ss, double min_v, double max_v)
+{
+	if( ss > max_v ) {
+		return max_v;
+	}
+	if( ss < min_v ) {
+		return min_v;
+	}
+	return ss;
+}
+
+void find_signals(double *dbms, int freq_low, int freq_step, int num_scans, double min_dbm, int channel_width)
+{
+	for(int i = 0; i < num_scans; i++) {
+		if( dbms[i] > min_dbm ) {
+			double loudest = dbms[i];
+			int loudest_i = i;
+			for( int j = i; j < MIN(num_scans, i+channel_width/freq_step); j++ ) {
+				if( j > loudest ) {
+					loudest = dbms[j];
+					loudest_i = j;
+				}
+			}
+			char s[1024];
+			int freq = freq_low + loudest_i*freq_step;
+			fmt_freq(s, freq);
+			printf("%s\n", s);
+		}
+	}
+}
+
+int find_loudest_signal(double *dbms, int freq_low, int freq_step, int num_scans)
+{
+	if( num_scans <= 0 ) {
+		return -1;
+	}
+
+	double loudest = dbms[0];
+	int loudest_i = 0;
+	for(int i = 0; i < num_scans; i++) {
+		if( dbms[i] > loudest ) {
+			loudest = dbms[i];
+			loudest_i = i;
+		}
+	}
+	return freq_low + loudest_i*freq_step;
+}
+
 static gboolean
 checkerboard_draw (GtkWidget *da,
                    cairo_t   *cr,
                    gpointer   data)
 {
 	struct gui_data *gd = (struct gui_data*) data;
-	gint i, j, xcount, width, height;
+	gint i, xcount, width, height;
 
 	pthread_mutex_lock(&(gd->mutex));
+
+	int loudest = find_loudest_signal(gd->dbms, gd->freq_low, gd->freq_step, gd->num_scans);
+	printf("loudest: %d\n", loudest);
+
+	find_signals(gd->dbms, gd->freq_low, gd->freq_step, gd->num_scans, -40.0, 30000);
 
 	unsigned char buf[32*1024];
 	//get_radio_raw_buf( &rs, buf );
@@ -573,14 +629,8 @@ checkerboard_draw (GtkWidget *da,
 	//printf("points to plot: %d\n", sigs_num_steps);
 	double scale = (double) gd->num_scans*view_range / (double)width;
 
-	//double clamp_range = clamp_max_dbm - clamp_min_dbm;
-
 	int start_i = gd->view_start * gd->num_scans;
 
-	double clamp_min_dbm = -100.0;
-	double clamp_max_dbm = 0.0;
-
-	printf("draw %d %d %d %lf\n", width, gd->num_scans, start_i, scale);
 	for( i = 0; i < width; i++ ) {
 		int i1 = start_i + (int)(scale*i);
 		int i2 = start_i + (int)(scale*(i+1));
@@ -599,8 +649,10 @@ checkerboard_draw (GtkWidget *da,
 		//ss -= clamp_min_dbm;
 		//ss /= (clamp_max_dbm - clamp_min_dbm);
 
+		if( !gd->normalize ) {
+			ss = (clamp_range(ss, -60.0, 0.0) + 60.0) / 60.0;
+		}
 		ss *= 200.0;
-		//ss *= zoom_dbm;
 
 		int y = 200 - ss; // * 300.0;
 
@@ -647,7 +699,7 @@ checkerboard_draw (GtkWidget *da,
 	return TRUE;
 }
 
-void plot_dbms(struct gui_data *gd) //int low_freq, int step, int num_steps, double *dbms)
+int plot_dbms(struct gui_data *gd) //int low_freq, int step, int num_steps, double *dbms)
 {
 	//sigs_low_freq = low_freq;
 	//sigs_num_steps = num_steps;
@@ -690,6 +742,31 @@ void plot_dbms(struct gui_data *gd) //int low_freq, int step, int num_steps, dou
 	return 0;
 }
 
+void print_loudest(int low_freq, int step, int num_steps, double *dbms)
+{
+	printf("start at %d\n", low_freq);
+
+	double max_dbm = -9999.0;
+	int max_freq = 0;
+	int cur_freq = low_freq;
+
+	for (int i=0; i<num_steps; i++) {
+		if( dbms[i] > max_dbm ) {
+			max_dbm = dbms[i];
+			max_freq = cur_freq;
+		}
+		cur_freq += step;
+	}
+	printf("end at %d\n", cur_freq);
+	printf("next at %d\n", cur_freq+step);
+
+	if( max_freq ) {
+		printf("strongest signal at %d\n", max_freq);
+	} else {
+		printf("none\n");
+	}
+}
+
 void dbms_update(double *dbms, int start_freq, int freq_step, int num_steps, void *user_data)
 {
 	struct gui_data *gd = user_data;
@@ -703,7 +780,9 @@ void dbms_update(double *dbms, int start_freq, int freq_step, int num_steps, voi
 	gd->freq_step = freq_step;
 	gd->num_scans = num_steps;
 
-	normalize_signals(gd->dbms, num_steps);
+	if( gd->normalize ) {
+		normalize_signals(gd->dbms, num_steps);
+	}
 
 	pthread_mutex_unlock(&(gd->mutex));
 
@@ -731,6 +810,7 @@ int main(int argc, char **argv)
 	pthread_mutex_init(&gd.mutex, NULL);
 	gd.freq_low = 159000000;
 	gd.freq_high = 165000000;
+	gd.normalize = false;
 
 	if( argc == 3 ) {
 		gd.freq_low = atoi(argv[1]) * 1000000;
@@ -749,7 +829,8 @@ int main(int argc, char **argv)
 	struct radio_scanner *rs;
 	init_radio(&rs, dbms_update, &gd);
 
-	radio_sample(rs, gd.freq_low, gd.freq_high);
+	//radio_sample(rs, gd.freq_low, gd.freq_high);
+	radio_listen(rs, gd.freq_low);
 
 	plot_dbms(&gd); //freq_low, step, bin_len*num_scans, dbms);
 

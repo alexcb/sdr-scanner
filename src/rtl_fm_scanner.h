@@ -16,3 +16,5 @@ int stop_radio( struct radio_scanner* rs );
 //int get_radio_lowpassed( struct radio_scanner* rs, int16_t *buf );
 //
 int radio_sample( struct radio_scanner* rs, int freq_low, int freq_high );
+
+int radio_listen( struct radio_scanner* rs, int freq );

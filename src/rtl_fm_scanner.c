@@ -49,6 +49,10 @@
 
 #include "rtl-sdr.h"
 
+#define IDLE_MODE 0
+#define SAMPLE_MODE 1
+#define LISTEM_MODE 2
+
 //const int rate = 1000000;
 const int rate = 2800000;
 const int bin_e = 10;
@@ -61,6 +65,7 @@ struct radio_scanner {
 	rtlsdr_dev_t *dev;
 	pthread_mutex_t mutex;
 	int freq_low, freq_high;
+	int mode;
 };
 //int step = (double)rate / (double)(bin_len);
 //double *dbms = NULL; //[16384];
@@ -597,32 +602,6 @@ void scanner(struct radio_scanner *rs, int low_freq, double *dbms)
 	}
 }
 
-void print_loudest(int low_freq, int step, int num_steps, double *dbms)
-{
-	printf("start at %d\n", low_freq);
-
-	double max_dbm = -9999.0;
-	int max_freq = 0;
-	int cur_freq = low_freq;
-
-	for (int i=0; i<num_steps; i++) {
-		if( dbms[i] > max_dbm ) {
-			max_dbm = dbms[i];
-			max_freq = cur_freq;
-		}
-		cur_freq += step;
-	}
-	printf("end at %d\n", cur_freq);
-	printf("next at %d\n", cur_freq+step);
-
-	if( max_freq ) {
-		printf("strongest signal at %d\n", max_freq);
-	} else {
-		printf("none\n");
-	}
-}
-
-
 double window(double *dbms, int num_samples)
 {
 	double sum = 0.0;
@@ -670,16 +649,30 @@ static void* radioscanner( void* arg )
 	double *dbms = malloc(sizeof(double) * bin_len * num_scans);
 	for(;;) {
 		pthread_mutex_lock(&(rs->mutex));
-		for( int i = 0; i < num_scans; i++ ) {
-			int freq = rs->freq_low + i * rate;
-			scanner(rs, freq, dbms + i*bin_len);
-		}
+		switch( rs->mode ) {
+			case SAMPLE_MODE:
+				{
+					for( int i = 0; i < num_scans; i++ ) {
+						int freq = rs->freq_low + i * rate;
+						scanner(rs, freq, dbms + i*bin_len);
+					}
 
-		rs->dbms_cb(dbms, rs->freq_low, step, bin_len*num_scans, rs->dbms_cb_user_data);
+					rs->dbms_cb(dbms, rs->freq_low, step, bin_len*num_scans, rs->dbms_cb_user_data);
+				}
+				break;
+			case LISTEM_MODE:
+			{
+				printf("listen\n");
+			}
+				break;
+			default:
+			break;
+		}
 		pthread_mutex_unlock(&(rs->mutex));
 		usleep(10000);
 	}
 }
+
 pthread_t thread;
 int init_radio(struct radio_scanner **rs, dbms_cb_t dbms_cb, void *user_data)
 {
@@ -731,8 +724,18 @@ int stop_radio(struct radio_scanner *rs)
 int radio_sample( struct radio_scanner* rs, int freq_low, int freq_high )
 {
 	pthread_mutex_lock(&(rs->mutex));
+	rs->mode = SAMPLE_MODE;
 	rs->freq_low = freq_low;
 	rs->freq_high = freq_high;
+	pthread_mutex_unlock(&(rs->mutex));
+	return 0;
+}
+
+int radio_listen( struct radio_scanner* rs, int freq )
+{
+	pthread_mutex_lock(&(rs->mutex));
+	rs->mode = LISTEM_MODE;
+	rs->freq_low = freq;
 	pthread_mutex_unlock(&(rs->mutex));
 	return 0;
 }
