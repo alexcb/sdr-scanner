@@ -830,7 +830,7 @@ int main(int argc, char **argv)
 	init_radio(&rs, dbms_update, &gd);
 
 	//radio_sample(rs, gd.freq_low, gd.freq_high);
-	radio_listen(rs, gd.freq_low);
+	radio_listen(rs, 162475000);
 
 	plot_dbms(&gd); //freq_low, step, bin_len*num_scans, dbms);
 
