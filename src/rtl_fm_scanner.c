@@ -41,6 +41,7 @@
 #include <stdlib.h>
 #include <time.h>
 #include <assert.h>
+#include <stdbool.h>
 
 #include <unistd.h>
 
@@ -60,8 +61,19 @@
 #define MAXIMUM_OVERSAMPLE 16
 #define MAXIMUM_BUF_LENGTH ( MAXIMUM_OVERSAMPLE * DEFAULT_BUF_LENGTH )
 
-//const int rate = 1000000;
-const int rate = 2800000;
+#define BUF_SIZE 1024
+
+#define safe_cond_signal( n, m )                                                                   \
+	pthread_mutex_lock( m );                                                                       \
+	pthread_cond_signal( n );                                                                      \
+	pthread_mutex_unlock( m )
+#define safe_cond_wait( n, m )                                                                     \
+	pthread_mutex_lock( m );                                                                       \
+	pthread_cond_wait( n, m );                                                                     \
+	pthread_mutex_unlock( m )
+
+const int rate = 1000000;
+//const int rate = 2800000;
 const int bin_e = 10;
 const int bin_len = 1 << bin_e; // 1024
 const int buf_len = 16384*8;
@@ -677,7 +689,7 @@ void find_channels(int low_freq, int step, int num_steps, double *dbms)
 	}
 }
 
-static void optimal_settings( struct radio_scanner *rs, int freq )
+static int optimal_settings( struct radio_scanner *rs, int freq )
 {
 	// giant ball of hacks
 	// seems unable to do a single pass, 2:1
@@ -692,7 +704,7 @@ static void optimal_settings( struct radio_scanner *rs, int freq )
 	capture_freq = freq;
 	capture_rate = dm->downsample * dm->rate_in;
 	//if( !d->offset_tuning ) {
-	//	capture_freq = freq + capture_rate / 4;
+	capture_freq = freq + capture_rate / 4;
 	//}
 	dm->output_scale = ( 1 << 15 ) / ( 128 * dm->downsample );
 	if( dm->output_scale < 1 ) {
@@ -703,6 +715,8 @@ static void optimal_settings( struct radio_scanner *rs, int freq )
 	//}
 	//d->freq = (uint32_t)capture_freq;
 	//d->rate = (uint32_t)capture_rate;
+	printf("opt settings %d %d\n", capture_freq, capture_rate);
+	return capture_freq;
 }
 
 void listen_and_decode(struct radio_scanner *rs)
@@ -711,8 +725,8 @@ void listen_and_decode(struct radio_scanner *rs)
 
 	if( last_freq != rs->freq_low ) {
 		last_freq = rs->freq_low;
-		optimal_settings(rs, rs->freq_low);
-		retune(rs->dev, rs->freq_low);
+		int freq = optimal_settings(rs, rs->freq_low);
+		retune(rs->dev, freq);
 	}
 
 	int len;
@@ -724,15 +738,14 @@ void listen_and_decode(struct radio_scanner *rs)
 		return 0;
 	}
 
+
+
 	int i;
-	//struct dongle_state* s = ctx;
 	struct demod_state* d = &rs->demod_state;
-	//struct output_state* o = d->output_target;
 	int signal;
 
-	//if( !s->offset_tuning ) {
-	//	rotate_90( buf, len );
-	//}
+
+	rotate_90( buf, len );
 	for( i = 0; i < (int)len; i++ ) {
 		buf16[i] = (int16_t)buf[i] - 127;
 	}
@@ -743,26 +756,63 @@ void listen_and_decode(struct radio_scanner *rs)
 	int sr = 0;
 	low_pass( d );
 
-	sr = rms( d->lowpassed, d->lp_len, 1 );
-	if( sr > 0 ) {
-		d->signal = sr;
-	}
-
-	//printf("sr: %d\n", sr);
-	//if( sr < d->squelch_level ) {
-	//	// printf("muting due to %d < %d\n", sr, d->squelch_level);
-	//	for( i = 0; i < d->lp_len; i++ ) {
-	//		d->lowpassed[i] = 0;
-	//	}
-	//}
-
 	d->mode_demod( d ); /* lowpassed -> result */
 
-	//pthread_rwlock_wrlock( &o->rw );
-	//memcpy( o->result, d->result, 2 * d->result_len );
-	//o->result_len = d->result_len;
-	//pthread_rwlock_unlock( &o->rw );
-	//safe_cond_signal( &o->ready, &o->ready_m );
+	for( int i = 0; i < d->result_len; i++ ) {
+		int32_t tmp = d->result[i];
+		//tmp *= rs->volume;
+		//tmp /= 100;
+		d->result[i] = tmp;
+	}
+	int error;
+	int res;
+	res = pa_simple_write( pa_handle, d->result, 2 * d->result_len, &error );
+	if( res != 0 ) {
+		printf( "failed to write audio\n" );
+	}
+
+
+	return 1;
+
+
+	/////int i;
+	///////struct dongle_state* s = ctx;
+	/////struct demod_state* d = &rs->demod_state;
+	///////struct output_state* o = d->output_target;
+	/////int signal;
+
+	/////rotate_90( buf, len );
+
+	/////for( i = 0; i < (int)len; i++ ) {
+	/////	buf16[i] = (int16_t)buf[i] - 127;
+	/////}
+
+	/////memcpy( d->lowpassed, buf16, 2 * len );
+	/////d->lp_len = len;
+
+	/////int sr = 0;
+	/////low_pass( d );
+
+	/////sr = rms( d->lowpassed, d->lp_len, 1 );
+	/////if( sr > 0 ) {
+	/////	d->signal = sr;
+	/////}
+
+	///////printf("sr: %d\n", sr);
+	///////if( sr < d->squelch_level ) {
+	///////	// printf("muting due to %d < %d\n", sr, d->squelch_level);
+	///////	for( i = 0; i < d->lp_len; i++ ) {
+	///////		d->lowpassed[i] = 0;
+	///////	}
+	///////}
+
+	/////d->mode_demod( d ); /* lowpassed -> result */
+
+	///////pthread_rwlock_wrlock( &o->rw );
+	///////memcpy( o->result, d->result, 2 * d->result_len );
+	///////o->result_len = d->result_len;
+	///////pthread_rwlock_unlock( &o->rw );
+	///////safe_cond_signal( &o->ready, &o->ready_m );
 }
 
 
@@ -791,6 +841,7 @@ static void* radioscanner( void* arg )
 			case LISTEM_MODE:
 			{
 				printf("listen %d\n", rs->freq_low);
+				for(;;) {
 				// TODO actually tune the radio and decode it
 				listen_and_decode(rs);
 
@@ -798,7 +849,7 @@ static void* radioscanner( void* arg )
 				for( int i = 0; i < rs->demod_state.result_len; i++ ) {
 					int32_t tmp = rs->demod_state.result[i];
 					//tmp *= rs->volume;
-					tmp /= 100;
+					//tmp /= 100;
 					rs->demod_state.result[i] = tmp;
 				}
 				if( rs->demod_state.result_len > 0 ) {
@@ -806,6 +857,7 @@ static void* radioscanner( void* arg )
 					if( res != 0 ) {
 						printf( "failed to write audio\n" );
 					}
+				}
 				}
 			}
 				break;
@@ -820,6 +872,7 @@ static void* radioscanner( void* arg )
 pthread_t thread;
 int init_radio(struct radio_scanner **rs, dbms_cb_t dbms_cb, void *user_data)
 {
+	return init_radio2(rs);
 	int r;
 	*rs = malloc(sizeof(struct radio_scanner));
 	memset(*rs, 0, sizeof(struct radio_scanner));
@@ -1379,5 +1432,488 @@ void arbitrary_resample( int16_t* buf1, int16_t* buf2, int len1, int len2 )
 	else {
 		arbitrary_downsample( buf1, buf2, len1, len2 );
 	}
+}
+
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//
+//
+struct output_state;
+#define AUTO_GAIN -100
+#define BUFFER_DUMP 4096
+
+#define FREQUENCIES_LIMIT 1000
+
+static volatile int do_exit = 0;
+static int lcm_post[17] = {1, 1, 1, 3, 1, 5, 3, 7, 1, 9, 5, 11, 3, 13, 7, 15, 1};
+static int ACTUAL_BUF_LENGTH;
+
+
+struct dongle_state
+{
+	int exit_flag;
+	pthread_t thread;
+	rtlsdr_dev_t* dev;
+	int dev_index;
+	uint32_t freq;
+	uint32_t rate;
+	int gain;
+	uint16_t buf16[MAXIMUM_BUF_LENGTH];
+	uint32_t buf_len;
+	int ppm_error;
+	int offset_tuning;
+	int direct_sampling;
+	int mute;
+	pthread_rwlock_t rw;
+	pthread_cond_t ready;
+	pthread_mutex_t ready_m;
+	struct demod_state* demod_target;
+};
+
+struct output_state
+{
+	int exit_flag;
+	pthread_t thread;
+	FILE* file;
+	char* filename;
+	int16_t result[MAXIMUM_BUF_LENGTH];
+	int result_len;
+	int rate;
+	pthread_rwlock_t rw;
+	pthread_cond_t ready;
+	pthread_mutex_t ready_m;
+};
+
+struct freq
+{
+	uint32_t freq;
+	int scan_squelch;
+	int open_squelch;
+	int open_duration;
+	int skip_duration;
+	char* desc;
+};
+
+struct controller_state
+{
+	int exit_flag;
+	//pthread_t thread;
+	struct freq freqs[FREQUENCIES_LIMIT];
+	int freq_len;
+	int wb_mode;
+	pthread_cond_t hop;
+	pthread_mutex_t hop_m;
+	bool scanning;
+	bool skip;
+	int freq_adjust;
+	pthread_rwlock_t rw;
+};
+
+// multiple of these, eventually
+struct dongle_state dongle;
+struct demod_state demod;
+struct output_state output;
+struct controller_state controller;
+
+static void sighandler( int signum )
+{
+	fprintf( stderr, "Signal caught, exiting!\n" );
+	do_exit = 1;
+	rtlsdr_cancel_async( dongle.dev );
+}
+
+void full_demod( struct demod_state* d )
+{
+	int i;
+	int sr = 0;
+	low_pass( d );
+
+	sr = rms( d->lowpassed, d->lp_len, 1 );
+	if( sr > 0 ) {
+		d->signal = sr;
+	}
+
+	//printf("sr: %d\n", sr);
+	if( sr < d->squelch_level ) {
+		// printf("muting due to %d < %d\n", sr, d->squelch_level);
+		for( i = 0; i < d->lp_len; i++ ) {
+			d->lowpassed[i] = 0;
+		}
+	}
+
+	d->mode_demod( d ); /* lowpassed -> result */
+
+	// if( d->mode_demod == &raw_demod ) {
+	//	return;
+	//}
+	/* todo, fm noise squelch */
+	// use nicer filter here too?
+	// if (d->post_downsample > 1) {
+	//	d->result_len = low_pass_simple(d->result, d->result_len, d->post_downsample);}
+	// if (d->deemph) {
+	//	deemph_filter(d);}
+	// if (d->dc_block) {
+	//	dc_block_filter(d);}
+	// if (d->rate_out2 > 0) {
+	//	low_pass_real(d);
+	//	//arbitrary_resample(d->result, d->result, d->result_len, d->result_len * d->rate_out2 /
+	// d->rate_out);
+	//}
+}
+
+static int rtlsdr_callback( unsigned char* buf, uint32_t len, void* ctx )
+{
+	int i;
+	struct dongle_state* s = ctx;
+	struct demod_state* d = s->demod_target;
+	//struct output_state* o = d->output_target;
+	int signal;
+
+	uint16_t buf16[MAXIMUM_BUF_LENGTH];
+
+	rotate_90( buf, len );
+	for( i = 0; i < (int)len; i++ ) {
+		buf16[i] = (int16_t)buf[i] - 127;
+	}
+
+	memcpy( d->lowpassed, buf16, 2 * len );
+	d->lp_len = len;
+
+	low_pass( d );
+	d->mode_demod( d ); /* lowpassed -> result */
+
+	for( int i = 0; i < d->result_len; i++ ) {
+		int32_t tmp = d->result[i];
+		//tmp *= rs->volume;
+		//tmp /= 100;
+		d->result[i] = tmp;
+	}
+	int error;
+	int res;
+	res = pa_simple_write( pa_handle, d->result, 2 * d->result_len, &error );
+	if( res != 0 ) {
+		printf( "failed to write audio\n" );
+	}
+
+
+	return 1;
+}
+
+static void optimal_settings2( int freq, int rate );
+
+
+static void* dongle_thread_fn( void* arg )
+{
+	struct dongle_state* s = arg;
+	unsigned char buf[BUF_SIZE];
+	int len;
+
+	int freq_i = -1;
+	int freq = 0;
+
+	int blackout = 1;
+	int sample_wait = 1;
+	int squelch_wait = 0;
+	int skip_wait = 0;
+	int last_signal = -1;
+	bool next = true;
+
+	bool can_print = true;
+	bool scanning = true;
+	bool signal_found = false;
+
+	char* freq_desc = "";
+
+	int scan_squelch = 0;
+	int open_squelch = 0;
+	int open_duration;
+
+	int ii = 0;
+
+	safe_cond_wait( &s->ready, &s->ready_m );
+
+	while( !do_exit ) {
+
+		pthread_rwlock_wrlock( &dongle.rw );
+
+		int r = rtlsdr_read_sync( s->dev, buf, BUF_SIZE, &len );
+		if( r < 0 ) {
+			printf( "failed to read: %d\n", r );
+			return 0;
+		}
+
+		// printf("feed data %d\n", len);
+		last_signal = rtlsdr_callback( buf, len, s );
+		if( last_signal == -1 ) {
+			printf( "dropped data %d\n", len );
+		}
+
+		pthread_rwlock_unlock( &dongle.rw );
+		usleep(1);
+	}
+
+	return 0;
+}
+
+//static void* demod_thread_fn( void* arg )
+//{
+//	struct demod_state* d = arg;
+//	struct output_state* o = d->output_target;
+//	while( !do_exit ) {
+//		safe_cond_wait( &d->ready, &d->ready_m );
+//		pthread_rwlock_wrlock( &d->rw );
+//		d->signal = 0;
+//		// printf("process data\n");
+//		full_demod( d );
+//		pthread_rwlock_unlock( &d->rw );
+//		if( d->exit_flag ) {
+//			do_exit = 1;
+//		}
+//
+//		pthread_rwlock_wrlock( &o->rw );
+//		memcpy( o->result, d->result, 2 * d->result_len );
+//		o->result_len = d->result_len;
+//		pthread_rwlock_unlock( &o->rw );
+//		safe_cond_signal( &o->ready, &o->ready_m );
+//	}
+//	return 0;
+//}
+
+static void optimal_settings2( int freq, int rate )
+{
+	// giant ball of hacks
+	// seems unable to do a single pass, 2:1
+	int capture_freq, capture_rate;
+	struct dongle_state* d = &dongle;
+	struct demod_state* dm = &demod;
+	dm->downsample = ( 1000000 / dm->rate_in ) + 1;
+	if( dm->downsample_passes ) {
+		dm->downsample_passes = (int)log2( dm->downsample ) + 1;
+		dm->downsample = 1 << dm->downsample_passes;
+	}
+	capture_freq = freq;
+	capture_rate = dm->downsample * dm->rate_in;
+	if( !d->offset_tuning ) {
+		capture_freq = freq + capture_rate / 4;
+	}
+	dm->output_scale = ( 1 << 15 ) / ( 128 * dm->downsample );
+	if( dm->output_scale < 1 ) {
+		dm->output_scale = 1;
+	}
+	if( dm->mode_demod == &fm_demod ) {
+		dm->output_scale = 1;
+	}
+	d->freq = (uint32_t)capture_freq;
+	d->rate = (uint32_t)capture_rate;
+	printf("opt settings %d %d\n", capture_freq, capture_rate);
+}
+
+void dongle_init( struct dongle_state* s )
+{
+	s->rate = DEFAULT_SAMPLE_RATE;
+	s->gain = AUTO_GAIN; // tenths of a dB
+	s->mute = 0;
+	s->direct_sampling = 0;
+	s->offset_tuning = 0;
+	s->demod_target = &demod;
+	pthread_rwlock_init( &s->rw, NULL );
+	pthread_cond_init( &s->ready, NULL );
+	pthread_mutex_init( &s->ready_m, NULL );
+}
+
+void demod_init2( struct demod_state* s )
+{
+	s->rate_in = DEFAULT_SAMPLE_RATE;
+	s->rate_out = DEFAULT_SAMPLE_RATE;
+	s->squelch_level = 0;
+	s->downsample_passes = 0;
+	s->comp_fir_size = 0;
+	s->prev_index = 0;
+	s->post_downsample = 1; // once this works, default = 4
+	s->custom_atan = 0;
+	s->deemph = 0;
+	s->rate_out2 = -1; // flag for disabled
+	s->mode_demod = &fm_demod;
+	s->pre_j = s->pre_r = s->now_r = s->now_j = 0;
+	s->prev_lpr_index = 0;
+	s->deemph_a = 0;
+	s->now_lpr = 0;
+	s->dc_block = 0;
+	s->dc_avg = 0;
+	pthread_rwlock_init( &s->rw, NULL );
+	pthread_cond_init( &s->ready, NULL );
+	pthread_mutex_init( &s->ready_m, NULL );
+	//s->output_target = &output;
+	s->signal = 0;
+}
+
+void demod_cleanup( struct demod_state* s )
+{
+	pthread_rwlock_destroy( &s->rw );
+	pthread_cond_destroy( &s->ready );
+	pthread_mutex_destroy( &s->ready_m );
+}
+
+void output_init( struct output_state* s )
+{
+	s->rate = DEFAULT_SAMPLE_RATE;
+	pthread_rwlock_init( &s->rw, NULL );
+	pthread_cond_init( &s->ready, NULL );
+	pthread_mutex_init( &s->ready_m, NULL );
+}
+
+void output_cleanup( struct output_state* s )
+{
+	pthread_rwlock_destroy( &s->rw );
+	pthread_cond_destroy( &s->ready );
+	pthread_mutex_destroy( &s->ready_m );
+}
+
+void controller_init( struct controller_state* s )
+{
+	s->freq_len = 0;
+	s->wb_mode = 0;
+	s->scanning = true;
+	s->skip = false;
+	pthread_cond_init( &s->hop, NULL );
+	pthread_mutex_init( &s->hop_m, NULL );
+	pthread_mutex_init( &s->rw, NULL );
+}
+
+void controller_cleanup( struct controller_state* s )
+{
+	pthread_cond_destroy( &s->hop );
+	pthread_mutex_destroy( &s->hop_m );
+}
+
+const char* chomp( char* s )
+{
+	while( s[0] == ' ' || s[0] == '\t' || s[0] == '\n' )
+		s++;
+	return s;
+}
+
+int init_radio2( struct radio_scanner** rs )
+{
+	*rs = malloc( sizeof( struct radio_scanner ) );
+	//( **rs ).volume = 100;
+	//( **rs ).output_state = &output;
+	// struct sigaction sigact;
+	int r;
+	int dev_given = 0;
+	int enable_biastee = 0;
+	dongle_init( &dongle );
+	demod_init2( &demod );
+	output_init( &output );
+	controller_init( &controller );
+
+	static const pa_sample_spec ss = {
+		.format = PA_SAMPLE_S16LE, .rate = DEFAULT_SAMPLE_RATE, .channels = 1};
+
+	int error;
+	pa_handle = pa_simple_new(
+		NULL, "alexplayer", PA_STREAM_PLAYBACK, NULL, "playback", &ss, NULL, NULL, &error );
+	if( pa_handle == NULL ) {
+		fprintf( stderr, __FILE__ ": pa_simple_new() failed: %s\n", pa_strerror( error ) );
+		assert( 0 );
+	}
+
+	dongle.demod_target->squelch_level = 0;
+
+	/* quadruple sample_rate to limit to Δθ to ±π/2 */
+	demod.rate_in *= demod.post_downsample;
+
+	if( !output.rate ) {
+		output.rate = demod.rate_out;
+	}
+
+	ACTUAL_BUF_LENGTH = lcm_post[demod.post_downsample] * DEFAULT_BUF_LENGTH;
+
+	if( !dev_given ) {
+		dongle.dev_index = verbose_device_search( "0" );
+	}
+
+	if( dongle.dev_index < 0 ) {
+		return 1;
+	}
+
+	r = rtlsdr_open( &dongle.dev, (uint32_t)dongle.dev_index );
+	if( r < 0 ) {
+		fprintf( stderr, "Failed to open rtlsdr device #%d.\n", dongle.dev_index );
+		return 1;
+	}
+
+	if( demod.deemph ) {
+		demod.deemph_a = (int)round( 1.0 / ( ( 1.0 - exp( -1.0 / ( demod.rate_out * 75e-6 ) ) ) ) );
+	}
+
+	/* Set the tuner gain */
+	if( dongle.gain == AUTO_GAIN ) {
+		verbose_auto_gain( dongle.dev );
+	}
+	else {
+		dongle.gain = nearest_gain( dongle.dev, dongle.gain );
+		verbose_gain_set( dongle.dev, dongle.gain );
+	}
+
+	rtlsdr_set_bias_tee( dongle.dev, enable_biastee );
+	if( enable_biastee )
+		fprintf( stderr, "activated bias-T on GPIO PIN 0\n" );
+
+	verbose_ppm_set( dongle.dev, dongle.ppm_error );
+
+	/* Reset endpoint before we start reading from it (mandatory) */
+	usleep( 1000000 );
+
+	pthread_create( &dongle.thread, NULL, dongle_thread_fn, (void*)( &dongle ) );
+
+	set_radio_freq( *rs, 162475000 );
+
+	return 0;
+}
+
+int verbose_set_sample_rate( rtlsdr_dev_t* dev, uint32_t samp_rate )
+{
+	int r;
+	printf("set sample rate %d\n", samp_rate);
+	r = rtlsdr_set_sample_rate( dev, samp_rate );
+	if( r < 0 ) {
+		fprintf( stderr, "WARNING: Failed to set sample rate.\n" );
+	}
+	else {
+		fprintf( stderr, "Sampling at %u S/s.\n", samp_rate );
+	}
+	return r;
+}
+
+#define BUFFER_DUMP			(1<<12)
+int set_radio_freq( struct radio_scanner* rs, int freq )
+{
+	unsigned char buf[BUFFER_DUMP];
+	static int i = 0;
+	printf("set_radio_freq start %d\n", freq);
+	pthread_rwlock_wrlock( &dongle.rw );
+
+	optimal_settings2( freq, dongle.demod_target->rate_in );
+	rtlsdr_set_center_freq( dongle.dev, dongle.freq );
+	verbose_set_sample_rate( dongle.dev, dongle.rate );
+	verbose_reset_buffer( dongle.dev );
+	printf("tuned to %d at %d rate\n", dongle.freq, dongle.rate);
+
+	usleep(5000);
+
+	// ignore buffer after reading to let it settle
+	int len;
+	int r = rtlsdr_read_sync( dongle.dev, buf, BUFFER_DUMP, &len );
+	if( r < 0 ) {
+		printf( "failed to read: %d\n", r );
+	}
+
+	pthread_rwlock_unlock( &dongle.rw );
+	printf("set_radio_freq end\n");
+
+	safe_cond_signal( &dongle.ready, &dongle.ready_m );
+
+	return 0;
 }
 
