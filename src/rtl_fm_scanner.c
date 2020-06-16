@@ -724,21 +724,20 @@ void listen_and_decode(struct radio_scanner *rs)
 	static int last_freq = 0;
 
 	if( last_freq != rs->freq_low ) {
+		printf("return\n");
 		last_freq = rs->freq_low;
 		int freq = optimal_settings(rs, rs->freq_low);
 		retune(rs->dev, freq);
 	}
 
 	int len;
-	unsigned char buf[MAXIMUM_BUF_LENGTH];
-	uint16_t buf16[MAXIMUM_BUF_LENGTH];
-	int r = rtlsdr_read_sync( rs->dev, buf, MAXIMUM_BUF_LENGTH, &len );
+	unsigned char buf[BUF_SIZE];
+	uint16_t buf16[BUF_SIZE];
+	int r = rtlsdr_read_sync( rs->dev, buf, BUF_SIZE, &len );
 	if( r < 0 ) {
 		printf( "failed to read: %d\n", r );
 		return 0;
 	}
-
-
 
 	int i;
 	struct demod_state* d = &rs->demod_state;
@@ -840,39 +839,37 @@ static void* radioscanner( void* arg )
 				break;
 			case LISTEM_MODE:
 			{
-				printf("listen %d\n", rs->freq_low);
-				for(;;) {
+				//printf("listen %d\n", rs->freq_low);
 				// TODO actually tune the radio and decode it
 				listen_and_decode(rs);
 
 				// TODO perhaps this needs to be done in a different thread?
-				for( int i = 0; i < rs->demod_state.result_len; i++ ) {
-					int32_t tmp = rs->demod_state.result[i];
-					//tmp *= rs->volume;
-					//tmp /= 100;
-					rs->demod_state.result[i] = tmp;
-				}
-				if( rs->demod_state.result_len > 0 ) {
-					res = pa_simple_write( pa_handle, rs->demod_state.result, 2 * rs->demod_state.result_len, &error );
-					if( res != 0 ) {
-						printf( "failed to write audio\n" );
-					}
-				}
-				}
+				//for( int i = 0; i < rs->demod_state.result_len; i++ ) {
+				//	int32_t tmp = rs->demod_state.result[i];
+				//	//tmp *= rs->volume;
+				//	//tmp /= 100;
+				//	rs->demod_state.result[i] = tmp;
+				//}
+				//if( rs->demod_state.result_len > 0 ) {
+				//	res = pa_simple_write( pa_handle, rs->demod_state.result, 2 * rs->demod_state.result_len, &error );
+				//	if( res != 0 ) {
+				//		printf( "failed to write audio\n" );
+				//	}
+				//}
 			}
 				break;
 			default:
 			break;
 		}
 		pthread_mutex_unlock(&(rs->mutex));
-		usleep(10000);
+		usleep(100);
 	}
 }
 
 pthread_t thread;
 int init_radio(struct radio_scanner **rs, dbms_cb_t dbms_cb, void *user_data)
 {
-	return init_radio2(rs);
+	//return init_radio2(rs); // this version has less blips in it
 	int r;
 	*rs = malloc(sizeof(struct radio_scanner));
 	memset(*rs, 0, sizeof(struct radio_scanner));
@@ -904,7 +901,7 @@ int init_radio(struct radio_scanner **rs, dbms_cb_t dbms_cb, void *user_data)
 	/* Set the tuner gain */
 	// can't use auto-gain because it changes between scan tunes
 	//verbose_auto_gain(dev);
-	int gain = nearest_gain((**rs).dev, 100);
+	int gain = nearest_gain((**rs).dev, 450); // IMPORTANT if it's too low, FM demod doesn't work (e.g. 100 was too low)
 	verbose_gain_set((**rs).dev, gain);
 
 	int ppm_error = 0;
@@ -1843,10 +1840,11 @@ int init_radio2( struct radio_scanner** rs )
 		return 1;
 	}
 
-	if( demod.deemph ) {
-		demod.deemph_a = (int)round( 1.0 / ( ( 1.0 - exp( -1.0 / ( demod.rate_out * 75e-6 ) ) ) ) );
-	}
+	//if( demod.deemph ) {
+	//	demod.deemph_a = (int)round( 1.0 / ( ( 1.0 - exp( -1.0 / ( demod.rate_out * 75e-6 ) ) ) ) );
+	//}
 
+	dongle.gain = 500;
 	/* Set the tuner gain */
 	if( dongle.gain == AUTO_GAIN ) {
 		verbose_auto_gain( dongle.dev );
