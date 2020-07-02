@@ -61,7 +61,7 @@
 #define MAXIMUM_OVERSAMPLE 16
 #define MAXIMUM_BUF_LENGTH ( MAXIMUM_OVERSAMPLE * DEFAULT_BUF_LENGTH )
 
-#define BUF_SIZE 1024
+#define BUF_SIZE 1024*4
 
 #define safe_cond_signal( n, m )                                                                   \
 	pthread_mutex_lock( m );                                                                       \
@@ -72,7 +72,8 @@
 	pthread_cond_wait( n, m );                                                                     \
 	pthread_mutex_unlock( m )
 
-const int rate = 1000000;
+//const int rate = 1; // DEFAULT_SAMPLE_RATE;
+//const int rate = 1000000;
 //const int rate = 2800000;
 const int bin_e = 10;
 const int bin_len = 1 << bin_e; // 1024
@@ -106,7 +107,6 @@ struct demod_state
 	int post_downsample;
 	int output_scale;
 	int squelch_level;
-	int downsample_passes;
 	int comp_fir_size;
 	int custom_atan;
 	int deemph, deemph_a;
@@ -587,6 +587,7 @@ void scanner(struct radio_scanner *rs, int low_freq, double *dbms)
 	long tmp;
 	double dbm;
 
+	int rate = 1; // FIXME used to be defined globally; don't know what the value should be.
 	int bw2 = rate / 2;
 	int center_freq = low_freq + bw2;
 
@@ -697,10 +698,8 @@ static int optimal_settings( struct radio_scanner *rs, int freq )
 	//struct dongle_state* d = &dongle;
 	struct demod_state* dm = &rs->demod_state;
 	dm->downsample = ( 1000000 / dm->rate_in ) + 1;
-	if( dm->downsample_passes ) {
-		dm->downsample_passes = (int)log2( dm->downsample ) + 1;
-		dm->downsample = 1 << dm->downsample_passes;
-	}
+	printf("down sample: %d\n", dm->downsample);
+	dm->downsample = 32;
 	capture_freq = freq;
 	capture_rate = dm->downsample * dm->rate_in;
 	//if( !d->offset_tuning ) {
@@ -724,7 +723,7 @@ void listen_and_decode(struct radio_scanner *rs)
 	static int last_freq = 0;
 
 	if( last_freq != rs->freq_low ) {
-		printf("return\n");
+		printf("tune to %d\n", rs->freq_low);
 		last_freq = rs->freq_low;
 		int freq = optimal_settings(rs, rs->freq_low);
 		retune(rs->dev, freq);
@@ -738,6 +737,11 @@ void listen_and_decode(struct radio_scanner *rs)
 		printf( "failed to read: %d\n", r );
 		return 0;
 	}
+	//static int last_len = 0;
+	//if( last_len != len ) {
+	//printf( "len: %d\n", len );
+	//last_len = len;
+	//}
 
 	int i;
 	struct demod_state* d = &rs->demod_state;
@@ -754,8 +758,7 @@ void listen_and_decode(struct radio_scanner *rs)
 
 	int sr = 0;
 	low_pass( d );
-
-	d->mode_demod( d ); /* lowpassed -> result */
+	fm_demod( d ); /* lowpassed -> result */
 
 	for( int i = 0; i < d->result_len; i++ ) {
 		int32_t tmp = d->result[i];
@@ -817,6 +820,7 @@ void listen_and_decode(struct radio_scanner *rs)
 
 static void* radioscanner( void* arg )
 {
+	int rate = 1; // FIXME used to be defined globally; don't know what the value should be.
 	int res;
 	int error;
 	struct radio_scanner *rs = arg;
@@ -839,23 +843,7 @@ static void* radioscanner( void* arg )
 				break;
 			case LISTEM_MODE:
 			{
-				//printf("listen %d\n", rs->freq_low);
-				// TODO actually tune the radio and decode it
 				listen_and_decode(rs);
-
-				// TODO perhaps this needs to be done in a different thread?
-				//for( int i = 0; i < rs->demod_state.result_len; i++ ) {
-				//	int32_t tmp = rs->demod_state.result[i];
-				//	//tmp *= rs->volume;
-				//	//tmp /= 100;
-				//	rs->demod_state.result[i] = tmp;
-				//}
-				//if( rs->demod_state.result_len > 0 ) {
-				//	res = pa_simple_write( pa_handle, rs->demod_state.result, 2 * rs->demod_state.result_len, &error );
-				//	if( res != 0 ) {
-				//		printf( "failed to write audio\n" );
-				//	}
-				//}
 			}
 				break;
 			default:
@@ -916,7 +904,7 @@ int init_radio(struct radio_scanner **rs, dbms_cb_t dbms_cb, void *user_data)
 	verbose_reset_buffer((**rs).dev);
 
 	/* actually do stuff */
-	rtlsdr_set_sample_rate((**rs).dev, rate);
+	//rtlsdr_set_sample_rate((**rs).dev, rate);
 	sine_table(bin_e);
 
 	pthread_create( &thread, NULL, radioscanner, *rs );
@@ -941,6 +929,7 @@ int radio_sample( struct radio_scanner* rs, int freq_low, int freq_high )
 
 int radio_listen( struct radio_scanner* rs, int freq )
 {
+	printf("radio_listen %d\n", freq);
 	pthread_mutex_lock(&(rs->mutex));
 	rs->mode = LISTEM_MODE;
 	rs->freq_low = freq;
@@ -1198,17 +1187,17 @@ void fm_demod( struct demod_state* fm )
 	pcm = polar_discriminant( lp[0], lp[1], fm->pre_r, fm->pre_j );
 	fm->result[0] = (int16_t)pcm;
 	for( i = 2; i < ( fm->lp_len - 1 ); i += 2 ) {
-		switch( fm->custom_atan ) {
-		case 0:
+		//switch( fm->custom_atan ) {
+		//case 0:
 			pcm = polar_discriminant( lp[i], lp[i + 1], lp[i - 2], lp[i - 1] );
-			break;
-		case 1:
-			pcm = polar_disc_fast( lp[i], lp[i + 1], lp[i - 2], lp[i - 1] );
-			break;
-		case 2:
-			pcm = polar_disc_lut( lp[i], lp[i + 1], lp[i - 2], lp[i - 1] );
-			break;
-		}
+		//	break;
+		//case 1:
+		//	pcm = polar_disc_fast( lp[i], lp[i + 1], lp[i - 2], lp[i - 1] );
+		//	break;
+		//case 2:
+		//	pcm = polar_disc_lut( lp[i], lp[i + 1], lp[i - 2], lp[i - 1] );
+		//	break;
+		//}
 		fm->result[i / 2] = (int16_t)pcm;
 	}
 	fm->pre_r = lp[fm->lp_len - 2];
@@ -1271,7 +1260,6 @@ void demod_init( struct demod_state* s )
 	s->rate_in = DEFAULT_SAMPLE_RATE;
 	s->rate_out = DEFAULT_SAMPLE_RATE;
 	s->squelch_level = 0;
-	s->downsample_passes = 0;
 	s->comp_fir_size = 0;
 	s->prev_index = 0;
 	s->post_downsample = 1; // once this works, default = 4
@@ -1521,22 +1509,22 @@ static void sighandler( int signum )
 
 void full_demod( struct demod_state* d )
 {
-	int i;
-	int sr = 0;
+	//int i;
+	//int sr = 0;
 	low_pass( d );
 
-	sr = rms( d->lowpassed, d->lp_len, 1 );
-	if( sr > 0 ) {
-		d->signal = sr;
-	}
+	//sr = rms( d->lowpassed, d->lp_len, 1 );
+	//if( sr > 0 ) {
+	//	d->signal = sr;
+	//}
 
-	//printf("sr: %d\n", sr);
-	if( sr < d->squelch_level ) {
-		// printf("muting due to %d < %d\n", sr, d->squelch_level);
-		for( i = 0; i < d->lp_len; i++ ) {
-			d->lowpassed[i] = 0;
-		}
-	}
+	////printf("sr: %d\n", sr);
+	//if( sr < d->squelch_level ) {
+	//	// printf("muting due to %d < %d\n", sr, d->squelch_level);
+	//	for( i = 0; i < d->lp_len; i++ ) {
+	//		d->lowpassed[i] = 0;
+	//	}
+	//}
 
 	d->mode_demod( d ); /* lowpassed -> result */
 
@@ -1560,6 +1548,7 @@ void full_demod( struct demod_state* d )
 
 static int rtlsdr_callback( unsigned char* buf, uint32_t len, void* ctx )
 {
+	assert(0);
 	int i;
 	struct dongle_state* s = ctx;
 	struct demod_state* d = s->demod_target;
@@ -1684,10 +1673,6 @@ static void optimal_settings2( int freq, int rate )
 	struct dongle_state* d = &dongle;
 	struct demod_state* dm = &demod;
 	dm->downsample = ( 1000000 / dm->rate_in ) + 1;
-	if( dm->downsample_passes ) {
-		dm->downsample_passes = (int)log2( dm->downsample ) + 1;
-		dm->downsample = 1 << dm->downsample_passes;
-	}
 	capture_freq = freq;
 	capture_rate = dm->downsample * dm->rate_in;
 	if( !d->offset_tuning ) {
@@ -1723,7 +1708,6 @@ void demod_init2( struct demod_state* s )
 	s->rate_in = DEFAULT_SAMPLE_RATE;
 	s->rate_out = DEFAULT_SAMPLE_RATE;
 	s->squelch_level = 0;
-	s->downsample_passes = 0;
 	s->comp_fir_size = 0;
 	s->prev_index = 0;
 	s->post_downsample = 1; // once this works, default = 4
@@ -1865,7 +1849,9 @@ int init_radio2( struct radio_scanner** rs )
 
 	pthread_create( &dongle.thread, NULL, dongle_thread_fn, (void*)( &dongle ) );
 
-	set_radio_freq( *rs, 162475000 );
+	int freq = 162475000;
+	printf("setting to %d\n", freq);
+	set_radio_freq( *rs, freq );
 
 	return 0;
 }
